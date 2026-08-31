@@ -17,6 +17,6 @@
 installCrds: true
 
 # Only needed for the EKS Pod Identity alternative described in
-# docs/02-architecture.md (requires the ACK EKS controller in the cluster).
+# docs/00-architecture.md (requires the ACK EKS controller in the cluster).
 # Leave unset for the default IRSA path used by 04-restate-cluster.yaml.
 # awsPodIdentityAssociationCluster: REPLACE_ME_EKS_CLUSTER_NAME

@@ -299,7 +299,7 @@ spec:
     # IRSA: the operator creates ServiceAccount "restate" in namespace
     # "restate"; this annotation binds it to an IAM role that can read/write
     # the snapshots bucket (policy: resources/01-restate-snapshots-iam-policy.json,
-    # role creation: docs/01-runbook.md step 2). STS is reached via public IPs,
+    # role creation: docs/02-runbook.md step 2). STS is reached via public IPs,
     # which the operator's default egress NetworkPolicy already allows.
     #
     # Alternative (what Restate Cloud itself uses): EKS Pod Identity managed

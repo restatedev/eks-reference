@@ -2,7 +2,7 @@
 
 Apply the files in [`resources/`](../resources/) in numeric order. Each step
 below names the resource it consumes. Check
-[prerequisites](00-prerequisites.md) and fill every `REPLACE_ME` first.
+[prerequisites](01-prerequisites.md) and fill every `REPLACE_ME` first.
 
 ## 0. Auth + kubeconfig
 
@@ -49,7 +49,7 @@ Then fill the role ARN into `resources/04-restate-cluster.yaml` →
 `security.serviceAccountAnnotations`.
 
 *Alternative (what Restate Cloud itself runs):* operator-managed EKS Pod
-Identity — see [architecture](02-architecture.md#iam-for-snapshots).
+Identity — see [architecture](00-architecture.md#iam-for-snapshots).
 
 ## 3. Operator — `resources/02-restate-operator.values.yaml`
 
@@ -115,7 +115,9 @@ kubectl -n restate-apps get restatedeployments   # READY + registered
 The operator registers each revision with the cluster's admin API itself and
 labels the pods `allow.restate.dev/restate: "true"`, which the cluster's
 egress NetworkPolicy matches — cross-namespace invocation needs no extra
-config (details in [architecture](02-architecture.md#cross-namespace-networking)).
+config (details in [architecture](00-architecture.md#cross-namespace-networking)).
+Versioning, draining and rollback of these services:
+[deploying services](03-deploying-services.md).
 
 ## 6. Poke it
 

@@ -49,7 +49,7 @@ read it before "fixing" anything in the cluster manifest that looks unusual.
   here the container command keeps only the address-list / node-id derivation
   and the **operator** provisions the cluster
   (`spec.cluster.autoProvision: true` + `auto-provision = false` in the
-  TOML) — see [architecture](02-architecture.md#replicated-metadata-bootstrap).
+  TOML) — see [architecture](00-architecture.md#replicated-metadata-bootstrap).
 - IAM: cloud uses operator-managed EKS Pod Identity (needs the ACK EKS
   controller); this repo defaults to IRSA, with the Pod Identity path
   documented as the alternative.

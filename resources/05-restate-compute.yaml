@@ -6,7 +6,8 @@
 # every revision gets its own ReplicaSet + Service, the operator registers each
 # revision with the cluster's admin API automatically (no manual
 # `restate deployments register`), and old revisions are drained — scaled down
-# only once they have no in-flight invocations.
+# only once they have no in-flight invocations. Lifecycle details:
+# docs/03-deploying-services.md.
 #
 # Cross-namespace networking is handled by the operator: it stamps the pods
 # with the label `allow.restate.dev/restate: "true"`, which the RestateCluster's

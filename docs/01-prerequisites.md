@@ -1,6 +1,6 @@
 # Prerequisites
 
-What must exist before running the [runbook](01-runbook.md).
+What must exist before running the [runbook](02-runbook.md).
 
 ## EKS cluster
 

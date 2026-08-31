@@ -90,7 +90,7 @@ Two directions to reason about:
   `04-restate-cluster.yaml` allowlists the `restate-apps` namespace.
 
 All of this only takes effect if the CNI enforces NetworkPolicy
-(see [prerequisites](00-prerequisites.md)).
+(see [prerequisites](01-prerequisites.md)).
 
 One AWS-specific egress gotcha: the default egress rule allows **public IPs
 only**. S3 through a *Gateway* VPC endpoint keeps working (it's routing-level;
@@ -104,22 +104,18 @@ its STS interface endpoint.)
 ## RestateDeployment mechanics
 
 `resources/05-restate-compute.yaml`. A Deployment-alike with Restate-aware
-rollout semantics:
-
-- each revision gets its **own ReplicaSet + Service**, so old code keeps
-  serving its in-flight invocations while new code takes new ones,
-- the operator **registers each revision** with the cluster's admin API
-  (no manual `restate deployments register`),
-- old revisions **drain**: scaled down only once Restate reports no pinned
-  invocations remain.
-- the container port **must be named `restate`** — the operator builds the
-  registration URL from it.
+rollout semantics: each revision gets its **own ReplicaSet + Service**, is
+**registered** with the cluster's admin API by the operator, and old
+revisions **drain** — scaled down only once Restate reports nothing pinned
+to them. The container port **must be named `restate`** — the operator
+builds the registration URL from it. Full lifecycle (versioning, draining,
+rollback, knobs): [deploying services](03-deploying-services.md).
 
 ## IAM for snapshots
 
 Default here: **IRSA**. The operator creates ServiceAccount `restate`;
 `security.serviceAccountAnnotations` adds `eks.amazonaws.com/role-arn`, and the
-role's trust policy (created in [runbook step 2](01-runbook.md)) allows that SA.
+role's trust policy (created in [runbook step 2](02-runbook.md)) allows that SA.
 STS endpoints are public IPs, allowed by the default egress policy.
 
 Alternative (what Restate Cloud itself runs): **operator-managed EKS Pod

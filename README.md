@@ -7,16 +7,18 @@ the Restate Cloud profile **`3-node.xlarge-vqueues`** (3 × 24 CPU / 50 GiB, 48
 partitions, 1 TiB gp3 per node, high-throughput cell tuning with vqueues
 enabled).
 
-**Start here → [`docs/01-runbook.md`](docs/01-runbook.md).**
+**Start here → [`docs/00-architecture.md`](docs/00-architecture.md)** for what
+you're deploying, then the [runbook](docs/02-runbook.md) to deploy it.
 
 ## Docs
 
 | Doc | What's in it |
 |---|---|
-| [`docs/00-prerequisites.md`](docs/00-prerequisites.md) | what the EKS cluster and AWS account need; toolchain; the `REPLACE_ME` placeholder table |
-| [`docs/01-runbook.md`](docs/01-runbook.md) | step-by-step: apply `resources/` in numeric order, verify each step |
-| [`docs/02-architecture.md`](docs/02-architecture.md) | what the operator materializes, cross-namespace networking, metadata bootstrap, IAM options |
-| [`docs/03-profile-fidelity.md`](docs/03-profile-fidelity.md) | what was kept / moved / dropped relative to the cloud profile — read before changing the cluster manifest |
+| [`docs/00-architecture.md`](docs/00-architecture.md) | what the operator materializes, cross-namespace networking, metadata bootstrap, IAM options |
+| [`docs/01-prerequisites.md`](docs/01-prerequisites.md) | what the EKS cluster and AWS account need; toolchain; the `REPLACE_ME` placeholder table |
+| [`docs/02-runbook.md`](docs/02-runbook.md) | step-by-step: apply `resources/` in numeric order, verify each step |
+| [`docs/03-deploying-services.md`](docs/03-deploying-services.md) | deploying SDK services: per-revision versioning, draining, rollback, the knobs |
+| [`docs/04-profile-fidelity.md`](docs/04-profile-fidelity.md) | what was kept / moved / dropped relative to the cloud profile — read before changing the cluster manifest |
 
 ## Resources (apply in order)
 
