@@ -1,0 +1,22 @@
+# Helm values for the restate-operator chart. This is not a kubectl manifest —
+# apply it with helm (namespace comes from 00-namespaces.yaml):
+#
+#   helm upgrade --install restate-operator \
+#     oci://ghcr.io/restatedev/restate-operator-helm \
+#     --version 3.0.1 \
+#     --namespace restate-operator \
+#     -f resources/02-restate-operator.values.yaml
+#
+# CRDs (RestateCluster, RestateDeployment) ship inside the chart and upgrade
+# with it (v3+); no cert-manager or separate CRD step. The chart's defaults
+# are correct for this setup — this file exists to pin the knobs you'd most
+# plausibly turn.
+
+# The chart installs/upgrades the CRDs (default). Only set false if you manage
+# CRDs out of band.
+installCrds: true
+
+# Only needed for the EKS Pod Identity alternative described in
+# docs/02-architecture.md (requires the ACK EKS controller in the cluster).
+# Leave unset for the default IRSA path used by 04-restate-cluster.yaml.
+# awsPodIdentityAssociationCluster: REPLACE_ME_EKS_CLUSTER_NAME

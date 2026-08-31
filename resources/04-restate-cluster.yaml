@@ -238,13 +238,14 @@ spec:
   security:
     # IRSA: the operator creates ServiceAccount "restate" in namespace
     # "restate"; this annotation binds it to an IAM role that can read/write
-    # the snapshots bucket (see aws/restate-snapshots-policy.json and the
-    # README for role creation). STS is reached via public IPs, which the
-    # operator's default egress NetworkPolicy already allows.
+    # the snapshots bucket (policy: resources/01-restate-snapshots-iam-policy.json,
+    # role creation: docs/01-runbook.md step 2). STS is reached via public IPs,
+    # which the operator's default egress NetworkPolicy already allows.
     #
     # Alternative (what Restate Cloud itself uses): EKS Pod Identity managed
     # by the operator — requires the ACK EKS controller plus the operator helm
-    # value `awsPodIdentityAssociationCluster`; then replace the annotation
+    # value `awsPodIdentityAssociationCluster` (commented out in
+    # resources/02-restate-operator.values.yaml); then replace the annotation
     # with:
     #   awsPodIdentityAssociationRoleArn: arn:aws:iam::REPLACE_ME:role/restate-snapshots
     # (that field also opens the NetworkPolicy egress to the pod-identity
@@ -272,7 +273,7 @@ spec:
               kubernetes.io/metadata.name: restate-apps
 
   storage:
-    # gp3 StorageClass from k8s/gp3-storageclass.yaml (EBS CSI driver
+    # gp3 StorageClass from resources/03-gp3-storageclass.yaml (EBS CSI driver
     # required). 1 TiB per node, from the profile; can be grown later
     # (storageRequestBytes can only ever increase).
     storageClassName: gp3

@@ -1,0 +1,20 @@
+# Namespaces we own (i.e. the ones the operator does NOT create):
+#
+#   - restate-operator: where the operator's Deployment lives. Creating it here
+#     keeps the helm install command free of --create-namespace.
+#   - restate-apps: the compute namespace — SDK services deployed as
+#     RestateDeployments (05-restate-compute.yaml).
+#
+# Deliberately absent: the "restate" namespace. The operator creates a
+# namespace named after the RestateCluster resource (04-restate-cluster.yaml)
+# and owns its whole lifecycle — creating it ourselves would fight the
+# operator's ownership.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: restate-operator
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: restate-apps
