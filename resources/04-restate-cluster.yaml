@@ -204,11 +204,8 @@ spec:
         value: "true"
       - name: RESTATE_EXPERIMENTAL_ENABLE_UNIQUE_RANDOM_SEEDS
         value: "true"
-      # vqueues + scoped virtual objects must be enabled TOGETHER: scoped VOs
-      # build on vqueues and share their storage format (with vqueues on and
-      # scoped VOs off, the SDK surface that comes with vqueues errors out).
-      # Both need restate >= 1.7.0, and once their records hit disk the
-      # cluster cannot be rolled back below that version.
+      # vqueues + scoped virtual objects are enabled together: scoped VOs
+      # build on vqueues and share their storage format.
       - name: RESTATE_EXPERIMENTAL_ENABLE_VQUEUES
         value: "true"
       - name: RESTATE_EXPERIMENTAL_ENABLE_SCOPED_VIRTUAL_OBJECTS

@@ -22,10 +22,8 @@ read it before "fixing" anything in the cluster manifest that looks unusual.
   bifrost cache + 6 GiB invoker + 4 GiB query engine = 33 GiB accounted, rest
   is unaccounted-overhead headroom.
 - **vqueues + scoped virtual objects** (`RESTATE_EXPERIMENTAL_ENABLE_VQUEUES`
-  / `…_SCOPED_VIRTUAL_OBJECTS`): enabled together, as they must be — scoped
-  VOs build on vqueues and share their storage format. Both need
-  restate ≥ 1.7.0, and once their records hit disk the cluster can't be rolled
-  back below that version.
+  / `…_SCOPED_VIRTUAL_OBJECTS`): enabled together — scoped VOs build on
+  vqueues and share their storage format.
 - **Scheduling**: required hostname anti-affinity + preferred zone spread; the
   `cloud.restate.dev/interruptible` toleration (inert unless you taint nodes
   with it).
