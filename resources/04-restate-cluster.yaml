@@ -232,7 +232,7 @@ spec:
     roles = [
         "worker",
         "admin",
-        "metadata-store",
+        "metadata-server",
         "log-server",
         "http-ingress",
     ]
@@ -252,9 +252,6 @@ spec:
 
     [bifrost]
     default-provider = "replicated"
-
-    [metadata-server]
-    type = "replicated"
 
     [default-retry-policy]
     initial-interval = "1s"

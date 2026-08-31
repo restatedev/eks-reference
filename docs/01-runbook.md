@@ -86,6 +86,15 @@ kubectl get restatecluster restate -o jsonpath='{.status.provisioned}'  # true
 kubectl -n restate exec restate-0 -- restatectl status   # nodes, logs, partitions
 ```
 
+Then prove the snapshot path (IAM role, region, bucket) end to end. Automatic
+snapshots only fire once a partition has seen **both** 100k records **and**
+5 minutes, so a misconfigured role would otherwise surface much later:
+
+```bash
+kubectl -n restate exec restate-0 -- restatectl snapshots create-snapshot
+aws s3 ls "s3://$BUCKET/restate/snapshots/" --recursive | head
+```
+
 Manual fallback if you ever need it (`restatectl` ships in the restate image;
 safe to re-run — an already-provisioned cluster is reported, not
 re-initialized):
