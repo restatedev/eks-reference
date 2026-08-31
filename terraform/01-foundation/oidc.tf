@@ -1,8 +1,15 @@
 # IRSA needs the cluster's OIDC issuer registered as an IAM identity
-# provider — this replaces the runbook's
-# `eksctl utils associate-iam-oidc-provider`. IAM allows exactly one provider
-# per issuer URL per account, so if the cluster already has one, set
-# create_oidc_provider = false and it is looked up instead of created.
+# provider. By default it is treated as a PREREQUISITE and looked up: IAM
+# allows exactly one provider per issuer URL, and most clusters already have
+# it — any IRSA-based addon (the required EBS CSI driver's usual install
+# included) or a previous `eksctl utils associate-iam-oidc-provider` created
+# it, and creating again fails with EntityAlreadyExists.
+#
+# create_oidc_provider = true (fresh cluster only) makes this stage create it
+# instead, replacing the runbook's eksctl step — but note the provider is
+# CLUSTER-WIDE state: every IRSA role trusting this issuer, other workloads'
+# included, depends on it, so a stage-01 destroy would take them all down
+# with it. See the destroy section of terraform/README.md.
 
 data "tls_certificate" "oidc" {
   count = var.create_oidc_provider ? 1 : 0

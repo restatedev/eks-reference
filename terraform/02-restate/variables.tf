@@ -5,6 +5,14 @@
 variable "cluster_name" {
   description = "Name of the existing EKS cluster to deploy into (the cluster itself is a prerequisite, not managed here)."
   type        = string
+
+  validation {
+    # IAM role names cap at 64 characters and the derived
+    # "<cluster>-restate-snapshots" name appends 18 (EKS itself allows
+    # cluster names up to 100).
+    condition     = length(var.cluster_name) <= 46
+    error_message = "cluster_name must be at most 46 characters: the derived \"<cluster>-restate-snapshots\" IAM role name would exceed IAM's 64-character RoleName limit."
+  }
 }
 
 variable "region" {
@@ -34,11 +42,14 @@ variable "service_image" {
 
 variable "create_oidc_provider" {
   description = <<-EOT
-    Whether stage 01 creates the cluster's IAM OIDC provider for IRSA. Set to
-    false if the cluster already has one (e.g. from a previous
-    `eksctl utils associate-iam-oidc-provider` on the runbook path) — it is
-    then looked up instead of created.
+    Whether stage 01 creates the cluster's IAM OIDC provider for IRSA.
+    Defaults to false (looked up as a prerequisite): IAM allows one provider
+    per issuer, and most clusters already have it — any IRSA-based addon (the
+    required EBS CSI driver's usual install included) or a previous
+    `eksctl utils associate-iam-oidc-provider` created it, so creating again
+    fails with EntityAlreadyExists. Set true only on a fresh cluster with no
+    provider, and read terraform/README.md's destroy caveat first.
   EOT
   type        = bool
-  default     = true
+  default     = false
 }

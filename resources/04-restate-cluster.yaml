@@ -145,8 +145,11 @@ spec:
         value: enable-time
       - name: RESTATE_ROCKSDB_STATISTICS_LEVEL
         value: except-time-for-mutex
-      # Cap rocksdb write throughput below what the gp3 volume can deliver so
-      # compaction backlog degrades gracefully instead of saturating the disk.
+      # Profile value: an upper bound on rocksdb's internal write pacing, not
+      # disk protection — it sits well above the volume's provisioned
+      # throughput (500 MiB/s here; cloud runs the same cap on baseline
+      # 125 MiB/s volumes), so the volume, not this cap, is the effective
+      # ceiling. See the header of resources/03-gp3-storageclass.yaml.
       - name: RESTATE_ROCKSDB_MAX_WRITE_RATE_PER_SECOND
         value: 1200 MiB
       # Snapshots + replicated log make the log-server WAL fsync redundant.
@@ -351,8 +354,9 @@ spec:
               kubernetes.io/metadata.name: restate-apps
 
   storage:
-    # gp3 StorageClass from resources/03-gp3-storageclass.yaml (EBS CSI driver
-    # required). 1 TiB per node, from the profile; can be grown later
-    # (storageRequestBytes can only ever increase).
-    storageClassName: gp3
+    # restate-gp3 StorageClass from resources/03-gp3-storageclass.yaml (EBS
+    # CSI driver required; scoped name — see that file's header). 1 TiB per
+    # node, from the profile; can be grown later (storageRequestBytes can
+    # only ever increase).
+    storageClassName: restate-gp3
     storageRequestBytes: 1099511627776

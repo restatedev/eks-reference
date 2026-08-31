@@ -4,7 +4,7 @@ What must exist before running the [runbook](02-runbook.md).
 
 ## EKS cluster
 
-- **aws-ebs-csi-driver** addon installed — the gp3 StorageClass
+- **aws-ebs-csi-driver** addon installed — the `restate-gp3` StorageClass
   ([`resources/03-gp3-storageclass.yaml`](../resources/03-gp3-storageclass.yaml))
   provisions through it.
 - **3 nodes** with ≥24 allocatable vCPU and ≥50 Gi allocatable memory each,
@@ -17,10 +17,21 @@ What must exist before running the [runbook](02-runbook.md).
   the restate nodes. With Karpenter, enforce it with a requirement
   `karpenter.k8s.aws/instance-local-nvme: DoesNotExist` (this is what Restate
   Cloud does).
-- Optional but recommended: **VPC CNI network policy enforcement**
-  (`enableNetworkPolicy: true` on the vpc-cni addon). The operator creates
-  deny-all-by-default NetworkPolicies around the cluster; without an enforcing
-  CNI they are inert — everything still works, just without isolation.
+- **VPC CNI network policy enforcement** (`enableNetworkPolicy: true` on the
+  vpc-cni addon — EKS ships with it **off**). Formally optional, but
+  understand what "off" means here: every NetworkPolicy in this stack — the
+  operator's deny-all around the cluster and the restate-apps ingress
+  lockdown — is silently inert, so **any pod in the cluster can reach the
+  unauthenticated admin API (9070, full cluster control) and call SDK
+  endpoints (9080) directly**. Run without enforcement only on a
+  single-tenant cluster where every workload is trusted with exactly that.
+  Verify enforcement is actually on:
+
+  ```bash
+  aws eks describe-addon --cluster-name "$CLUSTER" --region "$REGION" \
+    --addon-name vpc-cni --query addon.configurationValues
+  kubectl api-resources | grep policyendpoints   # served when enforcement is available
+  ```
 
 ## AWS
 

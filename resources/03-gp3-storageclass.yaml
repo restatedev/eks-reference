@@ -1,6 +1,14 @@
 # gp3 StorageClass for the Restate data volumes (EKS ships only gp2 by
 # default). Requires the aws-ebs-csi-driver addon.
 #
+# Named "restate-gp3", not "gp3", on purpose: many clusters already carry a
+# generic gp3 class, and StorageClass parameters are immutable — applying
+# this over an existing one fails (kubectl and Terraform alike). A scoped
+# name also keeps other workloads from adopting a class this stack owns and
+# may later delete. (Cloud names its class plain "gp3" — it owns its cells
+# end to end; a reference targeting shared clusters must not squat the
+# generic name.)
+#
 # `encrypted` and `xfs` match what Restate Cloud runs on EKS (cloud also turns
 # on account-wide EBS encryption-by-default, which a standalone cluster can't
 # assume — so encrypt here). Unlike cloud, which leaves gp3 at its baseline
@@ -13,7 +21,7 @@
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
-  name: gp3
+  name: restate-gp3
 provisioner: ebs.csi.aws.com
 parameters:
   type: gp3

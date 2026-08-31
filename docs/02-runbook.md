@@ -65,6 +65,11 @@ with `aws iam create-policy-version --set-as-default` instead. The role lives
 in an eksctl-owned CloudFormation stack; change it with
 `eksctl update iamserviceaccount` (same flags), not a second `create`.
 
+Naming limit: IAM role names cap at 64 characters and the
+`-restate-snapshots` suffix takes 18, so this scheme needs `$CLUSTER` ≤ 46
+characters (EKS itself allows up to 100 — the Terraform path validates this,
+here you get an IAM error at role creation).
+
 *Alternative (what Restate Cloud itself runs):* operator-managed EKS Pod
 Identity — see [architecture](00-architecture.md#iam-for-snapshots).
 

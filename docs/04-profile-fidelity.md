@@ -59,7 +59,10 @@ read it before "fixing" anything in the cluster manifest that looks unusual.
   uses `reclaimPolicy: Retain` — deleting the RestateCluster deletes its
   namespace and PVCs, and without Retain the EBS data volumes would go with
   them (cloud accepts Delete because its control plane owns cluster
-  decommissioning end to end).
+  decommissioning end to end). The class is also named `restate-gp3` rather
+  than cloud's `gp3`: on a shared cluster a generic `gp3` class often already
+  exists, StorageClass parameters are immutable (applying over it fails), and
+  a scoped name keeps other workloads off a class this stack owns.
 - NetworkPolicy: cloud exposes ingress **and admin** only to its own
   authenticating gateway namespace; this repo opens ingress to `restate-apps`
   and keeps the unauthenticated admin API closed to workloads entirely
