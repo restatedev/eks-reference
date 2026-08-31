@@ -101,6 +101,12 @@ spec:
         value: http://$(POD_NAME).restate-cluster.$(POD_NAMESPACE).svc.cluster.local:5122
       - name: DO_NOT_TRACK
         value: "true"
+      # Region for the AWS SDK (S3 snapshots). Restate Cloud leaves this to
+      # the node's IMDS, but pods can't reach IMDS on nodes hardened with an
+      # IMDSv2 hop limit of 1 — be explicit instead of depending on node
+      # metadata settings.
+      - name: AWS_REGION
+        value: REPLACE_ME_AWS_REGION
 
       # ---- memory budget (fits inside the 50Gi limit; invoker + rocksdb +
       # ---- bifrost cache + query engine = 23 GiB accounted, rest is

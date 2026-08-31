@@ -1,10 +1,13 @@
 # gp3 StorageClass for the Restate data volumes (EKS ships only gp2 by
 # default). Requires the aws-ebs-csi-driver addon.
 #
-# Baseline gp3 is 3000 IOPS / 125 MiB/s regardless of size. For the
-# 3-node.xlarge write path that's the first knob to turn under load:
-# iops can go to 16000 and throughput to 1000 (MiB/s) per volume, either here
-# (affects new volumes) or per-volume via a VolumeAttributesClass.
+# `encrypted` and `xfs` match what Restate Cloud runs on EKS (cloud also turns
+# on account-wide EBS encryption-by-default, which a standalone cluster can't
+# assume — so encrypt here). Unlike cloud, which leaves gp3 at its baseline
+# 3000 IOPS / 125 MiB/s, this class provisions 6000 IOPS / 500 MiB/s: for the
+# 3-node.xlarge write path that's the first knob to turn under load — iops can
+# go to 16000 and throughput to 1000 (MiB/s) per volume, either here (affects
+# new volumes) or per-volume via a VolumeAttributesClass.
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
@@ -14,6 +17,8 @@ parameters:
   type: gp3
   iops: "6000"
   throughput: "500"
+  encrypted: "true"
+  csi.storage.k8s.io/fstype: xfs
 volumeBindingMode: WaitForFirstConsumer
 allowVolumeExpansion: true
 reclaimPolicy: Delete

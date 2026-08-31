@@ -47,4 +47,10 @@ read it before "fixing" anything in the cluster manifest that looks unusual.
 - IAM: cloud uses operator-managed EKS Pod Identity (needs the ACK EKS
   controller); this repo defaults to IRSA, with the Pod Identity path
   documented as the alternative.
+- StorageClass: cloud's gp3 class is `encrypted` + `xfs` at baseline gp3
+  performance (3000 IOPS / 125 MiB/s); this repo keeps encryption and xfs but
+  provisions 6000 IOPS / 500 MiB/s up front.
+- `AWS_REGION` is set explicitly here; cloud leaves region resolution to the
+  node's IMDS (its nodes allow pod IMDS access, hop limit 2 — yours might
+  not).
 - Provenance label on the CR: `based-on-profile: 3-node.xlarge`.

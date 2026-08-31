@@ -92,6 +92,15 @@ Two directions to reason about:
 All of this only takes effect if the CNI enforces NetworkPolicy
 (see [prerequisites](00-prerequisites.md)).
 
+One AWS-specific egress gotcha: the default egress rule allows **public IPs
+only**. S3 through a *Gateway* VPC endpoint keeps working (it's routing-level;
+the destination IPs stay public), but *Interface* endpoints (STS, Secrets
+Manager, …) resolve to private in-VPC IPs that the deny-all egress blocks. If
+your VPC has such endpoints, allowlist their IPs on the RestateCluster with
+`networkEgressRules` — otherwise IRSA's STS calls silently start hitting a
+blackholed endpoint. (Restate Cloud maintains exactly such an allowlist for
+its STS interface endpoint.)
+
 ## RestateDeployment mechanics
 
 `resources/05-restate-compute.yaml`. A Deployment-alike with Restate-aware

@@ -29,7 +29,7 @@ partitions, 1 TiB gp3 per node, high-throughput cell tuning).
 | [`resources/05-restate-compute.yaml`](resources/05-restate-compute.yaml) | `RestateDeployment` skeleton in `restate-apps` (versioned ReplicaSets, auto-registration, drain-before-scale-down) | `kubectl apply` |
 
 Grep for **`REPLACE_ME`** under `resources/` before applying: snapshots bucket
-(×2), IAM account/role ARN, service image.
+(×2), AWS region, IAM account/role ARN, service image.
 
 ## Toolchain
 
@@ -43,4 +43,3 @@ Grep for **`REPLACE_ME`** under `resources/` before applying: snapshots bucket
   `kubectl exec`; for a local copy: `npm install -g @restatedev/restatectl`
 - `restate` (optional) — service-level CLI; the runbook curls the admin API
   instead. Install: `npm install -g @restatedev/restate`
-
