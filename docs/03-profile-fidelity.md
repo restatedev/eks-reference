@@ -39,8 +39,8 @@ read it before "fixing" anything in the cluster manifest that looks unusual.
 
 ## Adapted
 
-- Bootstrap: cloud's `startup.sh` lets pod 0 auto-provision on first boot;
-  here the startup script keeps only the address-list / node-id derivation
+- Bootstrap: cloud's startup wrapper lets pod 0 self-provision on first boot;
+  here the container command keeps only the address-list / node-id derivation
   and the **operator** provisions the cluster
   (`spec.cluster.autoProvision: true` + `auto-provision = false` in the
   TOML) — see [architecture](02-architecture.md#replicated-metadata-bootstrap).

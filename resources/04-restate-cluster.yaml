@@ -55,7 +55,8 @@ spec:
       limits:
         memory: 50Gi
 
-    # Replicated-metadata bootstrap, adapted from Restate Cloud's startup.sh.
+    # Replicated-metadata bootstrap, adapted from Restate Cloud's startup
+    # wrapper.
     # Builds the metadata-client address list from REPLICAS and derives a
     # stable node id from the pod index — per-pod values a StatefulSet's
     # single pod template can't express as plain env. POD_NAME is injected by

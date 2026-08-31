@@ -43,3 +43,4 @@ Grep for **`REPLACE_ME`** under `resources/` before applying: snapshots bucket
   `kubectl exec`; for a local copy: `npm install -g @restatedev/restatectl`
 - `restate` (optional) — service-level CLI; the runbook curls the admin API
   instead. Install: `npm install -g @restatedev/restate`
+

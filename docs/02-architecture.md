@@ -37,7 +37,7 @@ A replicated metadata cluster has a chicken-and-egg problem: everyone must
 agree on addresses and node ids, and someone must provision — exactly once.
 
 **Pods start and wait.** The container command in `04-restate-cluster.yaml`
-(adapted from Restate Cloud's `startup.sh`) computes the per-pod values a
+(adapted from Restate Cloud's startup wrapper) computes the per-pod values a
 StatefulSet's single pod template can't express as plain env:
 
 - `RESTATE_METADATA_CLIENT__ADDRESSES` built from `REPLICAS` (all three pods'
