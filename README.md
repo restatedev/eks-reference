@@ -38,8 +38,8 @@ Grep for **`REPLACE_ME`** under `resources/` before applying: snapshots bucket
 - `kubectl`
 - `helm` — installs the operator chart
 - `jq`
-- `restatectl` — cluster administration (provision, status). Ships inside the
-  restate image, so the runbook runs it via `kubectl exec`; for a local copy:
-  `npm install -g @restatedev/restatectl`
+- `restatectl` — cluster administration (status, logs; manual provisioning
+  fallback). Ships inside the restate image, so the runbook runs it via
+  `kubectl exec`; for a local copy: `npm install -g @restatedev/restatectl`
 - `restate` (optional) — service-level CLI; the runbook curls the admin API
   instead. Install: `npm install -g @restatedev/restate`

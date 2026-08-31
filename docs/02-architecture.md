@@ -35,12 +35,10 @@ ServiceAccount, and the NetworkPolicies. Two behaviors the manifest depends on:
 
 A replicated metadata cluster has a chicken-and-egg problem: everyone must
 agree on addresses and node ids, and someone must provision — exactly once.
-This deployment splits that into two explicit steps.
 
-**Step 1 — pods start and wait.** The container command in
-`04-restate-cluster.yaml` (adapted from Restate Cloud's `startup.sh`) computes
-the per-pod values a StatefulSet's single pod template can't express as plain
-env:
+**Pods start and wait.** The container command in `04-restate-cluster.yaml`
+(adapted from Restate Cloud's `startup.sh`) computes the per-pod values a
+StatefulSet's single pod template can't express as plain env:
 
 - `RESTATE_METADATA_CLIENT__ADDRESSES` built from `REPLICAS` (all three pods'
   stable DNS names),
@@ -50,17 +48,27 @@ env:
 `auto-provision = false` in the config TOML (the restate-server default is
 `true`) means fresh nodes come up, form the metadata cluster, and wait.
 
-**Step 2 — explicit provisioning.** `restatectl provision` against any single
-node ([runbook step 4](01-runbook.md)). Run without flags it adopts the
-contacted node's configured defaults (`default-num-partitions = 48`,
-`default-replication = { node = 2 }` from the TOML), prints the resulting
-configuration as a dry run, and provisions on confirmation (`--yes` skips the
-prompt). A second provision is rejected as already-provisioned, never
-re-initialized.
+**The operator provisions.** With `spec.cluster.autoProvision: true`, the
+operator waits for the `restate-0` pod to be Running (pods only turn Ready
+after provisioning, so it deliberately doesn't wait for Ready), then calls
+the ProvisionCluster gRPC API on it through the headless service with no
+explicit parameters — the contacted node's configured defaults apply
+(`default-num-partitions = 48`, `default-replication = { node = 2 }` from the
+TOML). "Already provisioned" counts as success, and the outcome is cached in
+the CR's `status.provisioned`, so the call runs at most once per cluster.
 
-Restate Cloud's script instead lets only pod 0 auto-provision on first boot.
-The two-step flow is a deliberate deviation: day-0 bootstrap becomes an
-auditable action, and no pod ever races to initialize cluster state.
+The operator *requires* server self-provisioning to be off: it fails
+validation unless the config TOML has `auto-provision = false` (or the env
+sets `RESTATE_AUTO_PROVISION=false`). No node can ever race the operator to
+initialize cluster state.
+
+Manual fallback: `restatectl provision` against any node does the same thing
+and is safe to re-run (an already-provisioned cluster is reported, never
+re-initialized).
+
+Restate Cloud's script instead lets only pod 0 auto-provision on first boot;
+operator-managed provisioning was chosen here so bootstrap is driven by the
+operator rather than by pod startup code.
 
 ## Cross-namespace networking
 

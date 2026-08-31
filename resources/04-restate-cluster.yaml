@@ -28,6 +28,19 @@ metadata:
     # provenance only: which cloud profile this spec was derived from
     based-on-profile: 3-node.xlarge
 spec:
+  # Operator-managed bootstrap: once the restate-0 pod is Running, the
+  # operator calls the ProvisionCluster gRPC API on it (node port 5122) with
+  # no explicit parameters, so the contacted node's configured defaults apply
+  # (default-num-partitions = 48, default-replication = { node = 2 } from the
+  # config TOML below). "Already provisioned" is treated as success and the
+  # result is cached in status.provisioned, so this runs at most once.
+  #
+  # Requires auto-provision = false in the config TOML — the operator refuses
+  # to provision otherwise, guaranteeing nodes never race it by
+  # self-provisioning.
+  cluster:
+    autoProvision: true
+
   compute:
     # Profile pins this exact image (restateImageOverride). Same artifact is on
     # ghcr.io/restatedev/restate:1.7.4 and docker.io/restatedev/restate:1.7.4.
@@ -49,12 +62,12 @@ spec:
     # the operator via the downward API; user env below overrides operator
     # defaults by name.
     #
-    # Deviation from the cloud script: no auto-provision. Cloud lets pod 0
+    # Deviation from the cloud script: no self-provisioning. Cloud lets pod 0
     # auto-provision on first boot; here `auto-provision = false` in the
     # config TOML below means fresh pods start, form the metadata cluster,
-    # and WAIT — provisioning is an explicit one-time `restatectl provision`
-    # (runbook step 4). Two-step on purpose: day-0 bootstrap is an auditable
-    # action, and no pod ever races to initialize cluster state.
+    # and WAIT — the operator provisions the cluster (spec.cluster above)
+    # once restate-0 is Running. No pod ever races to initialize cluster
+    # state.
     command: ["/bin/sh", "-c"]
     args:
       - |
@@ -206,8 +219,8 @@ spec:
   # Server config. The cloud profile sets default-num-partitions (48) and
   # default-replication ({node: 2} for 3 replicas) via env vars; folded into
   # the TOML here for readability — same effective config. These defaults are
-  # also what `restatectl provision` (run without flags) adopts at
-  # provisioning time.
+  # also what provisioning adopts: the operator's ProvisionCluster call and a
+  # bare `restatectl provision` both send no explicit parameters.
   config: |
     roles = [
         "worker",
@@ -217,9 +230,9 @@ spec:
         "http-ingress",
     ]
     bind-address = "0.0.0.0:5122"
-    # Two-step bootstrap: nodes start unprovisioned and wait; provision once
-    # with `restatectl provision` (runbook step 4). restate-server defaults
-    # this to true, so it must stay explicit.
+    # Nodes must not self-provision (restate-server defaults this to true):
+    # the operator provisions the cluster instead (spec.cluster.autoProvision)
+    # and refuses to do so unless this is explicitly false.
     auto-provision = false
     default-num-partitions = 48
     default-replication = { node = 2 }

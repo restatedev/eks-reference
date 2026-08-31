@@ -33,9 +33,9 @@ What must exist before running the [runbook](01-runbook.md).
 - `kubectl`
 - `helm` — installs the operator chart
 - `jq`
-- `restatectl` — cluster administration (provision, status). Ships inside the
-  restate image, so the runbook runs it via `kubectl exec` and no local
-  install is required; for a local copy:
+- `restatectl` — cluster administration (status, logs; manual provisioning
+  fallback). Ships inside the restate image, so the runbook runs it via
+  `kubectl exec` and no local install is required; for a local copy:
 
   ```bash
   npm install -g @restatedev/restatectl

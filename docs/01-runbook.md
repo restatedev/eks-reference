@@ -75,20 +75,24 @@ kubectl apply -f resources/04-restate-cluster.yaml
 kubectl -n restate get pods -w          # restate-0..2 -> Running
 ```
 
-The pods come up **unprovisioned** and wait (`auto-provision = false` in the
-config TOML). Provision once, against any single node — `restatectl` ships in
-the restate image:
+The pods come up **unprovisioned** (`auto-provision = false` in the config
+TOML) and wait. The **operator bootstraps the cluster**: once `restate-0` is
+Running it calls the ProvisionCluster gRPC API with no explicit parameters,
+so the config TOML's defaults apply — 48 partitions, `{node: 2}` replication —
+and the pods then turn Ready. Verify:
 
 ```bash
-kubectl -n restate exec restate-0 -- restatectl provision --yes
+kubectl get restatecluster restate -o jsonpath='{.status.provisioned}'  # true
 kubectl -n restate exec restate-0 -- restatectl status   # nodes, logs, partitions
 ```
 
-Run without flags, `provision` adopts the contacted node's configured
-defaults — 48 partitions, `{node: 2}` replication from the config TOML. Drop
-`--yes` (and add `-it` to the exec) to review the dry-run configuration
-interactively before confirming. Re-running is safe: an already-provisioned
-cluster is reported, not re-initialized.
+Manual fallback if you ever need it (`restatectl` ships in the restate image;
+safe to re-run — an already-provisioned cluster is reported, not
+re-initialized):
+
+```bash
+kubectl -n restate exec restate-0 -- restatectl provision --yes
+```
 
 ## 5. Compute — `resources/05-restate-compute.yaml`
 
