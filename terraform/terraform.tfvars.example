@@ -1,0 +1,19 @@
+# Copy to terraform.tfvars (git-ignored) next to this file and fill in.
+# Both stages read it:
+#
+#   terraform -chdir=01-foundation apply -var-file=../terraform.tfvars
+#   terraform -chdir=02-restate    apply -var-file=../terraform.tfvars
+
+cluster_name = "my-eks-cluster"
+region       = "eu-central-1"
+
+# Dedicated to this Restate cluster — see docs/01-prerequisites.md.
+snapshots_bucket = "my-eks-cluster-restate-snapshots"
+
+# Uncomment once you have an SDK service image; empty skips compute
+# (runbook step 5).
+# service_image = "123456789012.dkr.ecr.eu-central-1.amazonaws.com/service:v1"
+
+# Set to false if the cluster already has an IAM OIDC provider (e.g. from a
+# previous `eksctl utils associate-iam-oidc-provider`).
+# create_oidc_provider = false

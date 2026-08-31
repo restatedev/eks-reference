@@ -42,6 +42,10 @@ What must exist before running the [runbook](02-runbook.md).
 - `aws` — AWS CLI v2 (auth, IAM, S3; kubeconfig uses `aws eks get-token` as an
   exec plugin, no separate authenticator binary needed)
 - `eksctl` — OIDC provider / IRSA role plumbing
+- `terraform` (≥ 1.5) or `opentofu` — **only for the
+  [Terraform path](../terraform/README.md)**, which replaces the `eksctl`,
+  `helm`, and `kubectl apply` steps below (the `aws` CLI stays: the providers
+  authenticate through it)
 - `kubectl`
 - `helm` — installs the operator chart
 - `jq`

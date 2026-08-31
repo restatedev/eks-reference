@@ -11,6 +11,9 @@ with pkgs; pkgs.mkShell {
     kubectl
     kubernetes-helm
 
+    # for the Terraform path (terraform/); plain Terraform >= 1.5 works
+    # identically, but OpenTofu is the license-unencumbered nixpkgs default
+    opentofu
 
     jq
 

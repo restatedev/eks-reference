@@ -1,0 +1,15 @@
+# Local terraform working state. State files can contain rendered manifests
+# and account ids — keep them out of a public repo (use a remote backend for
+# real deployments).
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+crash.log
+
+# Deliberately NOT committed, against the usual advice: lock files record
+# provider hashes per toolchain, and Terraform and OpenTofu resolve different
+# builds — a committed lock from one breaks `init` verification on the other.
+# Generate your own with `terraform init` and commit it in your fork if you
+# standardize on one tool.
+.terraform.lock.hcl

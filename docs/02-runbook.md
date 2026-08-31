@@ -4,6 +4,9 @@ Apply the files in [`resources/`](../resources/) in numeric order. Each step
 below names the resource it consumes. Check
 [prerequisites](01-prerequisites.md) and fill every `REPLACE_ME` first.
 
+Prefer Terraform? [`terraform/`](../terraform/README.md) is this same runbook
+as two `apply`s, consuming the same `resources/` files.
+
 ## 0. Auth + kubeconfig
 
 ```bash

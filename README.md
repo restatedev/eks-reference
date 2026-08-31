@@ -34,6 +34,13 @@ you're deploying, then the [runbook](docs/02-runbook.md) to deploy it.
 Grep for **`REPLACE_ME`** under `resources/` before applying: snapshots bucket
 (×2), AWS region, IRSA role ARN, service image.
 
+## Terraform
+
+The same stack is available as Terraform under [`terraform/`](terraform/) —
+two root modules (AWS + operator, then the Restate CRs) that consume the
+`resources/` files as their single source of truth, so the two paths can't
+drift. See [`terraform/README.md`](terraform/README.md).
+
 ## Toolchain
 
 - `aws` — AWS CLI v2 (auth, IAM, S3; kubeconfig uses `aws eks get-token`)
