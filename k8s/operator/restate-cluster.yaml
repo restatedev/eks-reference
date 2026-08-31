@@ -1,0 +1,279 @@
+# RestateCluster: 3-node replicated Restate on EKS, managed by the
+# restate-operator (https://github.com/restatedev/restate-operator).
+#
+# Sizing/tuning is a faithful translation of the Restate Cloud profile
+# `3-node.xlarge` (restate-cloud/config/profiles.json):
+#   3 replicas x 24 CPU / 50 GiB, 48 partitions, 1 TiB gp3 volume each,
+#   high-throughput production cell tuning.
+#
+# Deliberately dropped from the cloud rendering (cloud-control-plane machinery
+# that doesn't apply to a standalone deployment):
+#   - node-state-control readiness-gate sidecar (nodeStateManagement feature)
+#   - request-signing private key via the AWS Secrets Store CSI provider
+#   - restate-cloud-ingress network peers, AWS_EXTERNAL_ID, storage accounting
+#
+# The operator creates a namespace named after this resource ("restate"),
+# a StatefulSet ("restate", pods restate-0..2), a headless Service
+# ("restate-cluster", node port 5122) and deny-all-by-default NetworkPolicies
+# (ingress 8080 / admin 9070 / node 5122 opened per `security.networkPeers`).
+#
+# REPLACE before applying (grep for REPLACE_ME):
+#   - the snapshots S3 bucket in RESTATE_WORKER__SNAPSHOTS__DESTINATION
+#   - the IAM role ARN in security.serviceAccountAnnotations
+apiVersion: restate.dev/v1
+kind: RestateCluster
+metadata:
+  name: restate
+  labels:
+    # provenance only: which cloud profile this spec was derived from
+    based-on-profile: 3-node.xlarge
+spec:
+  compute:
+    # Profile pins this exact image (restateImageOverride). Same artifact is on
+    # ghcr.io/restatedev/restate:1.7.4 and docker.io/restatedev/restate:1.7.4.
+    image: docker.restate.dev/restatedev/restate:1.7.4
+    replicas: 3
+    resources:
+      requests:
+        cpu: "24"
+        memory: 50Gi
+      # No CPU limit on purpose (profile expresses "memory-only limits"):
+      # Restate is allowed to burst above 24 cores if the node has headroom.
+      limits:
+        memory: 50Gi
+
+    # Replicated-metadata bootstrap, verbatim from Restate Cloud's startup.sh.
+    # Builds the metadata-client address list from REPLICAS, derives a stable
+    # node id from the pod index, and lets ONLY pod 0 auto-provision the
+    # cluster (pods 1..N join). POD_NAME is injected by the operator via the
+    # downward API; user env below overrides operator defaults by name.
+    command: ["/bin/sh", "-c"]
+    args:
+      - |
+        for i in $(seq 0 $((REPLICAS - 1))); do
+          if [ $i -gt 0 ]; then
+            addresses="${addresses},"
+          fi
+          addresses="${addresses}\"http://restate-${i}.restate-cluster.${POD_NAMESPACE}.svc.cluster.local:5122\""
+        done
+
+        export RESTATE_METADATA_CLIENT__ADDRESSES="[$addresses]"
+        export RESTATE_FORCE_NODE_ID=$(expr ${POD_INDEX} + 1)
+
+        if [ "${POD_INDEX}" -eq 0 ]; then
+          export RESTATE_AUTO_PROVISION=true
+        else
+          export RESTATE_AUTO_PROVISION=false
+        fi
+
+        exec restate-server
+
+    env:
+      # ---- identity / topology (order matters: POD_NAMESPACE is referenced
+      # ---- by $(POD_NAMESPACE) expansions further down) ----
+      - name: POD_NAMESPACE
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.namespace
+      - name: POD_INDEX
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.labels['apps.kubernetes.io/pod-index']
+      - name: REPLICAS
+        value: "3"
+      - name: RESTATE_ADVERTISED_ADDRESS
+        value: http://$(POD_NAME).restate-cluster.$(POD_NAMESPACE).svc.cluster.local:5122
+      - name: DO_NOT_TRACK
+        value: "true"
+
+      # ---- memory budget (fits inside the 50Gi limit; invoker + rocksdb +
+      # ---- bifrost cache + query engine = 23 GiB accounted, rest is
+      # ---- unaccounted overhead headroom) ----
+      - name: RESTATE_ROCKSDB_TOTAL_MEMORY_SIZE
+        value: 10 GiB
+      - name: RESTATE_BIFROST__RECORD_CACHE_MEMORY_SIZE
+        value: 3 GiB
+      - name: RESTATE_WORKER__INVOKER__MEMORY_LIMIT
+        value: 6 GiB
+      - name: RESTATE_ADMIN__QUERY_ENGINE__MEMORY_SIZE
+        value: 4 GiB
+      - name: RESTATE_ADMIN__QUERY_ENGINE__QUERY_PARALLELISM
+        value: "24"
+      - name: RESTATE_STORAGE_LOW_PRIORITY_BG_THREADS
+        value: "24"
+
+      # ---- journal retention ----
+      - name: RESTATE_DEFAULT_JOURNAL_RETENTION
+        value: 24 hours
+      - name: RESTATE_MAX_JOURNAL_RETENTION
+        value: 24 hours
+
+      # ---- rocksdb tuning ----
+      - name: RESTATE_ROCKSDB_LOG_KEEP_FILE_NUM
+        value: "3"
+      - name: RESTATE_ROCKSDB_LOG_LEVEL
+        value: info
+      - name: RESTATE_ROCKSDB_PERF_LEVEL
+        value: enable-time
+      - name: RESTATE_ROCKSDB_STATISTICS_LEVEL
+        value: except-time-for-mutex
+      # Snapshots + replicated log make the log-server WAL fsync redundant.
+      - name: RESTATE_LOG_SERVER__ROCKSDB_DISABLE_WAL_FSYNC
+        value: "true"
+
+      # ---- bifrost read path ----
+      - name: RESTATE_BIFROST__REPLICATED_LOGLET__READ_BATCH_SIZE
+        value: 512 KiB
+      - name: RESTATE_BIFROST__REPLICATED_LOGLET__READAHEAD_RECORDS
+        value: "5000"
+
+      # ---- invoker ----
+      - name: RESTATE_WORKER__INVOKER__CONCURRENT_INVOCATIONS_LIMIT
+        value: "1000"
+      - name: RESTATE_WORKER__INVOKER__INACTIVITY_TIMEOUT
+        value: 600s
+      - name: RESTATE_WORKER__INVOKER__HTTP2_STREAMS_PER_CONNECTION_LIMIT
+        value: "8"
+      - name: RESTATE_WORKER__INVOKER__HTTP2_INITIAL_MAX_SEND_STREAMS
+        value: "4"
+      - name: RESTATE_WORKER__INVOKER__REQUEST_IDENTITY_EXPIRATION
+        value: 1d
+
+      # ---- worker batching / query engine ----
+      - name: RESTATE_WORKER__MAX_COMMAND_BATCH_SIZE
+        value: "256"
+      - name: RESTATE_ADMIN__QUERY_ENGINE__DATAFUSION_OPTIONS
+        value: '{ "datafusion.execution.batch_size" = "256" }'
+
+      # ---- experimental flags: the profile pins image 1.7.4, these flags are
+      # ---- validated against exactly that version — revisit on any upgrade ----
+      - name: RESTATE_EXPERIMENTAL_ENABLE_PROTOCOL_V7
+        value: "true"
+      - name: RESTATE_EXPERIMENTAL_ENABLE_UNIQUE_RANDOM_SEEDS
+        value: "true"
+      - name: RESTATE_EXPERIMENTAL_SHUFFLER_BATCH_INGESTION
+        value: "true"
+
+      # ---- partition snapshots to S3 (required for a replicated cluster:
+      # ---- lets trimmed-log nodes and replacement pods bootstrap from S3
+      # ---- instead of replaying the full log) ----
+      - name: RESTATE_WORKER__SNAPSHOTS__DESTINATION
+        value: s3://REPLACE_ME_SNAPSHOTS_BUCKET/$(POD_NAMESPACE)/snapshots
+      - name: RESTATE_WORKER__SNAPSHOTS__SNAPSHOT_INTERVAL_NUM_RECORDS
+        value: "100000"
+      - name: RESTATE_WORKER__SNAPSHOTS__SNAPSHOT_INTERVAL
+        value: 5m
+      - name: RESTATE_WORKER__SNAPSHOTS__NUM_RETAINED
+        value: "2"
+
+    # Never two restate pods on one node; prefer spreading across AZs but
+    # don't require it (more replicas than zones must still schedule).
+    affinity:
+      podAntiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/name
+                  operator: In
+                  values: ["restate"]
+                - key: app.kubernetes.io/instance
+                  operator: In
+                  values: ["restate"]
+            topologyKey: kubernetes.io/hostname
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                  - key: app.kubernetes.io/name
+                    operator: In
+                    values: ["restate"]
+                  - key: app.kubernetes.io/instance
+                    operator: In
+                    values: ["restate"]
+              topologyKey: topology.kubernetes.io/zone
+
+    # From the profile. Only *permits* scheduling onto nodes tainted
+    # cloud.restate.dev/interruptible=true; inert if no node carries the taint.
+    tolerations:
+      - key: cloud.restate.dev/interruptible
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
+
+  # Server config. The cloud profile sets default-num-partitions (48) and
+  # default-replication ({node: 2} for 3 replicas) via env vars; folded into
+  # the TOML here for readability — same effective config.
+  config: |
+    roles = [
+        "worker",
+        "admin",
+        "metadata-store",
+        "log-server",
+        "http-ingress",
+    ]
+    bind-address = "0.0.0.0:5122"
+    default-num-partitions = 48
+    default-replication = { node = 2 }
+
+    [admin]
+    bind-address = "0.0.0.0:9070"
+
+    [ingress]
+    bind-address = "0.0.0.0:8080"
+
+    [bifrost]
+    default-provider = "replicated"
+
+    [metadata-server]
+    type = "replicated"
+
+    [default-retry-policy]
+    initial-interval = "1s"
+    exponentiation-factor = 2.0
+    max-attempts = 20
+    max-interval = "10m"
+    on-max-attempts = "pause"
+
+  security:
+    # IRSA: the operator creates ServiceAccount "restate" in namespace
+    # "restate"; this annotation binds it to an IAM role that can read/write
+    # the snapshots bucket (see aws/restate-snapshots-policy.json and the
+    # README for role creation). STS is reached via public IPs, which the
+    # operator's default egress NetworkPolicy already allows.
+    #
+    # Alternative (what Restate Cloud itself uses): EKS Pod Identity managed
+    # by the operator — requires the ACK EKS controller plus the operator helm
+    # value `awsPodIdentityAssociationCluster`; then replace the annotation
+    # with:
+    #   awsPodIdentityAssociationRoleArn: arn:aws:iam::REPLACE_ME:role/restate-snapshots
+    # (that field also opens the NetworkPolicy egress to the pod-identity
+    # agent at 169.254.170.23, which IRSA doesn't need).
+    serviceAccountAnnotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::REPLACE_ME_ACCOUNT/role/restate-snapshots
+
+    # The operator denies all traffic to/from the restate namespace by
+    # default, then opens: node-to-node (5122), operator->admin (needed for
+    # RestateDeployment registration), DNS, and public-internet egress
+    # (private ranges excluded). Egress from restate to service pods is opened
+    # automatically per RestateDeployment via the allow.restate.dev/restate
+    # pod label — nothing to configure here for the compute namespace.
+    #
+    # These peers additionally let the compute namespace call INTO the
+    # cluster: ingress :8080 (invoke) and admin :9070 (restate CLI, SQL).
+    networkPeers:
+      ingress:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: restate-apps
+      admin:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: restate-apps
+
+  storage:
+    # gp3 StorageClass from k8s/gp3-storageclass.yaml (EBS CSI driver
+    # required). 1 TiB per node, from the profile; can be grown later
+    # (storageRequestBytes can only ever increase).
+    storageClassName: gp3
+    storageRequestBytes: 1099511627776

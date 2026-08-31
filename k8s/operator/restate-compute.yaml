@@ -1,0 +1,50 @@
+# Compute plane: Restate SDK services live in their own namespace
+# ("restate-apps"), separate from the "restate" namespace the operator creates
+# for the RestateCluster.
+#
+# A RestateDeployment is a Deployment-alike managed by the restate-operator:
+# every revision gets its own ReplicaSet + Service, the operator registers each
+# revision with the cluster's admin API automatically (no manual
+# `restate deployments register`), and old revisions are drained — scaled down
+# only once they have no in-flight invocations.
+#
+# Cross-namespace networking is handled by the operator: it stamps the pods
+# with the label `allow.restate.dev/restate: "true"`, which the RestateCluster's
+# egress NetworkPolicy matches in any namespace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: restate-apps
+---
+apiVersion: restate.dev/v1beta1
+kind: RestateDeployment
+metadata:
+  name: service
+  namespace: restate-apps
+spec:
+  replicas: 2
+  restate:
+    register:
+      # the RestateCluster above; the operator resolves its admin endpoint
+      cluster: restate
+  selector:
+    matchLabels:
+      app: service
+  template:
+    metadata:
+      labels:
+        app: service
+    spec:
+      containers:
+        - name: service
+          # REPLACE_ME: the SDK service image (e.g. an ECR image built from
+          # this repo's node service). Port must be named "restate" — the
+          # operator uses it for the registration URL.
+          image: REPLACE_ME_SERVICE_IMAGE
+          ports:
+            - name: restate
+              containerPort: 9080
+          resources:
+            requests:
+              cpu: "1"
+              memory: 1Gi

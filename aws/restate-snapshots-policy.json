@@ -1,0 +1,17 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListSnapshotsBucket",
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket"],
+      "Resource": "arn:aws:s3:::REPLACE_ME_SNAPSHOTS_BUCKET"
+    },
+    {
+      "Sid": "ReadWriteSnapshots",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+      "Resource": "arn:aws:s3:::REPLACE_ME_SNAPSHOTS_BUCKET/*"
+    }
+  ]
+}
