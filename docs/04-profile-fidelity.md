@@ -54,8 +54,17 @@ read it before "fixing" anything in the cluster manifest that looks unusual.
   controller); this repo defaults to IRSA, with the Pod Identity path
   documented as the alternative.
 - StorageClass: cloud's gp3 class is `encrypted` + `xfs` at baseline gp3
-  performance (3000 IOPS / 125 MiB/s); this repo keeps encryption and xfs but
-  provisions 6000 IOPS / 500 MiB/s up front.
+  performance (3000 IOPS / 125 MiB/s) with `reclaimPolicy: Delete`; this repo
+  keeps encryption and xfs but provisions 6000 IOPS / 500 MiB/s up front and
+  uses `reclaimPolicy: Retain` — deleting the RestateCluster deletes its
+  namespace and PVCs, and without Retain the EBS data volumes would go with
+  them (cloud accepts Delete because its control plane owns cluster
+  decommissioning end to end).
+- NetworkPolicy: cloud exposes ingress **and admin** only to its own
+  authenticating gateway namespace; this repo opens ingress to `restate-apps`
+  and keeps the unauthenticated admin API closed to workloads entirely
+  (port-forward is the ops path). Cloud has no equivalent of our
+  `restate-apps` inbound lockdown — its SDK services live outside the cell.
 - `AWS_REGION` is set explicitly here; cloud leaves region resolution to the
   node's IMDS (its nodes allow pod IMDS access, hop limit 2 — yours might
   not).

@@ -1,4 +1,5 @@
-# Namespaces we own (i.e. the ones the operator does NOT create):
+# Namespaces we own (i.e. the ones the operator does NOT create), plus the
+# inbound-isolation NetworkPolicy for the compute namespace:
 #
 #   - restate-operator: where the operator's Deployment lives. Creating it here
 #     keeps the helm install command free of --create-namespace.
@@ -18,3 +19,32 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: restate-apps
+---
+# Inbound isolation for the compute namespace. The operator's deny-all
+# NetworkPolicies only guard the cluster namespace; without this, any pod in
+# the (NetworkPolicy-enforcing) cluster could call the SDK services on :9080
+# directly, bypassing Restate — and an SDK endpoint trusts its caller.
+#
+# Selecting every pod makes anything not listed below denied. Allowed in: the
+# Restate cluster namespace only — both the invoker's calls and the admin
+# API's discovery-on-registration requests originate there. The namespace
+# doesn't exist until the RestateCluster is applied (runbook step 4); the
+# selector simply matches nothing until then.
+#
+# Like the operator's own policies, this is inert unless the CNI enforces
+# NetworkPolicy (see docs/01-prerequisites.md). If you add liveness/readiness
+# probes to service pods, note that kubelet probes are host-local traffic that
+# common CNIs exempt from NetworkPolicy — verify on yours.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-from-restate-only
+  namespace: restate-apps
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: restate

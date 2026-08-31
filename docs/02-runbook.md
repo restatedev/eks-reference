@@ -15,9 +15,11 @@ aws eks update-kubeconfig --name "$CLUSTER" --region "$REGION"
 
 ## 1. Namespaces — `resources/00-namespaces.yaml`
 
-Creates `restate-operator` (helm target) and `restate-apps` (compute). The
-`restate` namespace is **not** here — the operator creates it from the
-RestateCluster in step 4.
+Creates `restate-operator` (helm target) and `restate-apps` (compute), plus a
+NetworkPolicy on `restate-apps` so only the Restate cluster can call the SDK
+services (nothing else should reach an SDK endpoint directly). The `restate`
+namespace is **not** here — the operator creates it from the RestateCluster in
+step 4.
 
 ```bash
 kubectl apply -f resources/00-namespaces.yaml
@@ -35,18 +37,30 @@ eksctl utils associate-iam-oidc-provider --cluster "$CLUSTER" --region "$REGION"
 
 sed "s/REPLACE_ME_SNAPSHOTS_BUCKET/$BUCKET/" \
   resources/01-restate-snapshots-iam-policy.json > /tmp/policy.json
-aws iam create-policy --policy-name restate-snapshots --policy-document file:///tmp/policy.json
+
+# Cluster-qualified names: IAM policies/roles are account-global, and the
+# role's IRSA trust is tied to THIS cluster's OIDC provider — a second EKS
+# cluster in the account needs its own pair (and its own bucket, see step 4).
+aws iam create-policy --policy-name "${CLUSTER}-restate-snapshots" \
+  --policy-document file:///tmp/policy.json
 
 # --role-only: the operator owns the ServiceAccount, we only need the role + trust policy
 eksctl create iamserviceaccount --cluster "$CLUSTER" --region "$REGION" \
   --namespace restate --name restate \
-  --role-name restate-snapshots \
-  --attach-policy-arn "arn:aws:iam::$ACCOUNT:policy/restate-snapshots" \
+  --role-name "${CLUSTER}-restate-snapshots" \
+  --attach-policy-arn "arn:aws:iam::$ACCOUNT:policy/${CLUSTER}-restate-snapshots" \
   --role-only --approve
 ```
 
-Then fill the role ARN into `resources/04-restate-cluster.yaml` →
-`security.serviceAccountAnnotations`.
+Then fill the role ARN —
+`arn:aws:iam::$ACCOUNT:role/${CLUSTER}-restate-snapshots` — into
+`resources/04-restate-cluster.yaml` → `security.serviceAccountAnnotations`
+(`REPLACE_ME_SNAPSHOTS_ROLE_ARN`).
+
+Rerunning this step: `create-policy` fails if the policy exists — update it
+with `aws iam create-policy-version --set-as-default` instead. The role lives
+in an eksctl-owned CloudFormation stack; change it with
+`eksctl update iamserviceaccount` (same flags), not a second `create`.
 
 *Alternative (what Restate Cloud itself runs):* operator-managed EKS Pod
 Identity — see [architecture](00-architecture.md#iam-for-snapshots).
@@ -95,6 +109,11 @@ kubectl -n restate exec restate-0 -- restatectl snapshots create-snapshot
 aws s3 ls "s3://$BUCKET/restate/snapshots/" --recursive | head
 ```
 
+The `restate/snapshots` prefix is fixed by the manifest, which is why the
+bucket must be **dedicated to this cluster**: a snapshot repository belongs to
+exactly one Restate cluster, and a second cluster pointed at the same prefix
+fails repository validation rather than silently mixing.
+
 Manual fallback if you ever need it (`restatectl` ships in the restate image;
 safe to re-run — an already-provisioned cluster is reported, not
 re-initialized):
@@ -122,7 +141,14 @@ Versioning, draining and rollback of these services:
 ## 6. Poke it
 
 ```bash
-kubectl -n restate port-forward svc/restate-cluster 8080:8080 9070:9070 &
+# svc/restate is the ClusterIP Service carrying 8080 + 9070; svc/restate-cluster
+# is the headless node-to-node Service and only has 5122.
+kubectl -n restate port-forward svc/restate 8080:8080 9070:9070 &
 curl localhost:9070/services | jq       # admin API (or: restate services list)
 curl localhost:8080/MyService/myHandler --json '{}'
 ```
+
+Port-forward tunnels through the kubelet, so the deny-all NetworkPolicies
+don't apply — this is the intended path to the admin API, which has no
+authentication and is deliberately not network-exposed to workloads
+(see [architecture](00-architecture.md#cross-namespace-networking)).

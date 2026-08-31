@@ -23,4 +23,12 @@ parameters:
   csi.storage.k8s.io/fstype: xfs
 volumeBindingMode: WaitForFirstConsumer
 allowVolumeExpansion: true
-reclaimPolicy: Delete
+# Deviation from cloud (which uses Delete): deleting the RestateCluster CR
+# deletes the namespace the operator created, which cascades to the PVCs —
+# with Delete, the CSI driver would then delete all three EBS data volumes.
+# Retain means an accidental (or deliberate) cluster deletion leaves the
+# volumes behind as Released PVs, to recover from or clean up explicitly.
+# reclaimPolicy is copied onto each PV at provision time, so changing it here
+# does NOT affect already-provisioned volumes — patch those directly:
+#   kubectl patch pv <pv> -p '{"spec":{"persistentVolumeReclaimPolicy":"Retain"}}'
+reclaimPolicy: Retain

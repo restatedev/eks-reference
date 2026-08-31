@@ -11,10 +11,12 @@ Source of truth for operator behavior:
 namespace: restate-operator     the operator Deployment (helm)
 namespace: restate              created BY the operator from the RestateCluster CR
   ├─ StatefulSet restate        pods restate-0..2, one per node (hard anti-affinity)
-  ├─ Service restate-cluster    headless; ports 8080 (ingress), 9070 (admin), 5122 (node)
+  ├─ Service restate            ClusterIP; 8080 (ingress), 9070 (admin), 5122 (metrics)
+  ├─ Service restate-cluster    headless; 5122 node-to-node (stable per-pod DNS)
   ├─ ServiceAccount restate     IRSA-annotated for S3 snapshot access
   └─ NetworkPolicies            deny-all default + carve-outs (see below)
-namespace: restate-apps         ours; SDK services as RestateDeployments
+namespace: restate-apps         ours; SDK services as RestateDeployments,
+                                ingress locked to the restate namespace
 ```
 
 ## What the operator does with a RestateCluster
@@ -78,16 +80,27 @@ registration), DNS, and public-internet egress (private ranges
 10/8, 172.16/12, 192.168/16, 169.254/16 excluded — which is why IRSA/STS works
 without extra rules).
 
-Two directions to reason about:
+Three directions to reason about:
 
 - **Cluster → services (outbound invocation)**: automatic. The operator stamps
   every RestateDeployment pod with the label
   `allow.restate.dev/<cluster-name>: "true"` (here:
   `allow.restate.dev/restate`), and the cluster's egress policy matches that
   label **in any namespace**. Nothing to configure.
-- **Services → cluster (inbound: invoke on 8080, admin on 9070)**: NOT
-  automatic. `security.networkPeers.{ingress,admin}` in
-  `04-restate-cluster.yaml` allowlists the `restate-apps` namespace.
+- **Services → cluster (inbound)**: NOT automatic.
+  `security.networkPeers.ingress` in `04-restate-cluster.yaml` allowlists the
+  `restate-apps` namespace for **8080 only**. The admin API (9070) is
+  deliberately not opened to workloads — it has no authentication and grants
+  full cluster control, so exposure is limited to the operator's own built-in
+  carve-out (`allowOperatorAccessToAdmin`, default true) and humans via
+  `kubectl port-forward`/`exec`, which tunnel through the kubelet and bypass
+  NetworkPolicy. (Restate Cloud does the same: its admin peers are only its
+  own authenticating gateway.)
+- **Everything else → services**: denied. `00-namespaces.yaml` adds a
+  NetworkPolicy on `restate-apps` admitting ingress only from the `restate`
+  namespace (invoker calls and registration-time discovery), so arbitrary
+  in-cluster workloads can't hit SDK endpoints on 9080 directly and bypass
+  Restate.
 
 All of this only takes effect if the CNI enforces NetworkPolicy
 (see [prerequisites](01-prerequisites.md)).

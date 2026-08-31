@@ -13,12 +13,14 @@
 #   - restate-cloud-ingress network peers, AWS_EXTERNAL_ID, storage accounting
 #
 # The operator creates a namespace named after this resource ("restate"),
-# a StatefulSet ("restate", pods restate-0..2), a headless Service
-# ("restate-cluster", node port 5122) and deny-all-by-default NetworkPolicies
-# (ingress 8080 / admin 9070 / node 5122 opened per `security.networkPeers`).
+# a StatefulSet ("restate", pods restate-0..2), two Services — "restate"
+# (ClusterIP: ingress 8080, admin 9070, metrics 5122) and "restate-cluster"
+# (headless, node-to-node 5122, stable per-pod DNS) — and deny-all-by-default
+# NetworkPolicies (ports opened per `security.networkPeers`).
 #
 # REPLACE before applying (grep for REPLACE_ME):
 #   - the snapshots S3 bucket in RESTATE_WORKER__SNAPSHOTS__DESTINATION
+#   - the AWS region in the AWS_REGION env var
 #   - the IAM role ARN in security.serviceAccountAnnotations
 apiVersion: restate.dev/v1
 kind: RestateCluster
@@ -214,6 +216,14 @@ spec:
       # ---- partition snapshots to S3 (required for a replicated cluster:
       # ---- lets trimmed-log nodes and replacement pods bootstrap from S3
       # ---- instead of replaying the full log) ----
+      #
+      # The bucket must be DEDICATED to this Restate cluster (cloud provisions
+      # one bucket per cluster): the prefix below resolves to
+      # "restate/snapshots" in every install of this manifest, and a snapshot
+      # repository is bound to one cluster — a second cluster writing to the
+      # same prefix fails the repository's cluster-validation, it does not
+      # silently mix. To share a bucket anyway, make the prefix unique per
+      # cluster instead.
       - name: RESTATE_WORKER__SNAPSHOTS__DESTINATION
         value: s3://REPLACE_ME_SNAPSHOTS_BUCKET/$(POD_NAMESPACE)/snapshots
       - name: RESTATE_WORKER__SNAPSHOTS__SNAPSHOT_INTERVAL_NUM_RECORDS
@@ -307,11 +317,13 @@ spec:
     # value `awsPodIdentityAssociationCluster` (commented out in
     # resources/02-restate-operator.values.yaml); then replace the annotation
     # with:
-    #   awsPodIdentityAssociationRoleArn: arn:aws:iam::REPLACE_ME:role/restate-snapshots
+    #   awsPodIdentityAssociationRoleArn: REPLACE_ME_SNAPSHOTS_ROLE_ARN
     # (that field also opens the NetworkPolicy egress to the pod-identity
     # agent at 169.254.170.23, which IRSA doesn't need).
     serviceAccountAnnotations:
-      eks.amazonaws.com/role-arn: arn:aws:iam::REPLACE_ME_ACCOUNT/role/restate-snapshots
+      # e.g. arn:aws:iam::<account>:role/<eks-cluster>-restate-snapshots,
+      # created in docs/02-runbook.md step 2
+      eks.amazonaws.com/role-arn: REPLACE_ME_SNAPSHOTS_ROLE_ARN
 
     # The operator denies all traffic to/from the restate namespace by
     # default, then opens: node-to-node (5122), operator->admin (needed for
@@ -320,14 +332,20 @@ spec:
     # automatically per RestateDeployment via the allow.restate.dev/restate
     # pod label — nothing to configure here for the compute namespace.
     #
-    # These peers additionally let the compute namespace call INTO the
-    # cluster: ingress :8080 (invoke) and admin :9070 (restate CLI, SQL).
+    # This peer additionally lets the compute namespace call INTO the
+    # cluster's ingress (:8080, invoke).
+    #
+    # The admin API (:9070) is deliberately NOT opened to workloads: it has no
+    # authentication and grants full cluster control (register/delete
+    # deployments, SQL over all state), so an allowlisted-but-compromised app
+    # pod could administer the cluster. Cloud only exposes it to its own
+    # authenticating gateway. The operator's registration access is a separate
+    # built-in carve-out (allowOperatorAccessToAdmin, default true). For human
+    # access use `kubectl port-forward`/`exec` — those tunnel through the
+    # kubelet and are not subject to NetworkPolicy — or allowlist a dedicated
+    # ops namespace here under an `admin:` key.
     networkPeers:
       ingress:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: restate-apps
-      admin:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: restate-apps

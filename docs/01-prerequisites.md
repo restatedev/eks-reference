@@ -24,12 +24,16 @@ What must exist before running the [runbook](02-runbook.md).
 
 ## AWS
 
-- An **S3 bucket** for partition snapshots. Required for a replicated cluster:
-  snapshots let trimmed-log nodes and replacement pods bootstrap from S3
-  instead of replaying the whole log. Create it with public access blocked and
-  SSL enforced; default SSE-S3 encryption is fine, and no lifecycle rules are
-  needed — Restate keeps a bounded number of snapshots per partition
-  (`NUM_RETAINED`).
+- An **S3 bucket** for partition snapshots, **dedicated to this cluster**
+  (this is what Restate Cloud provisions: one bucket per cluster). The
+  manifest's snapshot prefix is the same in every install, and a snapshot
+  repository belongs to exactly one Restate cluster — two clusters sharing a
+  bucket would collide on it. Snapshots are required for a replicated
+  cluster: they let trimmed-log nodes and replacement pods bootstrap from S3
+  instead of replaying the whole log. Create the bucket with public access
+  blocked and SSL enforced; default SSE-S3 encryption is fine, and no
+  lifecycle rules are needed — Restate keeps a bounded number of snapshots
+  per partition (`NUM_RETAINED`).
 - Permissions to create an IAM policy and role, and to associate an OIDC
   provider with the cluster (for IRSA).
 
@@ -64,6 +68,6 @@ Grep for **`REPLACE_ME`** under `resources/` before applying anything:
 |---|---|---|
 | `REPLACE_ME_SNAPSHOTS_BUCKET` | `01-restate-snapshots-iam-policy.json`, `04-restate-cluster.yaml` | the snapshots S3 bucket name |
 | `REPLACE_ME_AWS_REGION` | `04-restate-cluster.yaml` | region for the AWS SDK (S3 snapshots) — explicit so pods don't depend on IMDS reachability |
-| `REPLACE_ME_ACCOUNT` | `04-restate-cluster.yaml` | AWS account id in the IRSA role ARN |
+| `REPLACE_ME_SNAPSHOTS_ROLE_ARN` | `04-restate-cluster.yaml` | the IRSA role ARN from [runbook step 2](02-runbook.md) (`arn:aws:iam::<account>:role/<cluster>-restate-snapshots`) |
 | `REPLACE_ME_SERVICE_IMAGE` | `05-restate-compute.yaml` | the SDK service container image |
 | `REPLACE_ME_EKS_CLUSTER_NAME` | `02-restate-operator.values.yaml` (commented) | only for the Pod Identity alternative |

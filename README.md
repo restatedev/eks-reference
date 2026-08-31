@@ -24,15 +24,15 @@ you're deploying, then the [runbook](docs/02-runbook.md) to deploy it.
 
 | Resource | Kind | Applied with |
 |---|---|---|
-| [`resources/00-namespaces.yaml`](resources/00-namespaces.yaml) | Namespaces `restate-operator`, `restate-apps` | `kubectl apply` |
+| [`resources/00-namespaces.yaml`](resources/00-namespaces.yaml) | Namespaces `restate-operator`, `restate-apps` + ingress lockdown for the compute namespace | `kubectl apply` |
 | [`resources/01-restate-snapshots-iam-policy.json`](resources/01-restate-snapshots-iam-policy.json) | IAM policy for the snapshots bucket | `aws iam create-policy` + `eksctl` (runbook step 2) |
 | [`resources/02-restate-operator.values.yaml`](resources/02-restate-operator.values.yaml) | Helm values for the operator chart | `helm upgrade --install … -f` |
 | [`resources/03-gp3-storageclass.yaml`](resources/03-gp3-storageclass.yaml) | gp3 StorageClass (EKS only ships gp2) | `kubectl apply` |
-| [`resources/04-restate-cluster.yaml`](resources/04-restate-cluster.yaml) | the `RestateCluster` — the operator turns it into namespace `restate`, StatefulSet `restate-0..2`, Service `restate-cluster`, NetworkPolicies | `kubectl apply` |
+| [`resources/04-restate-cluster.yaml`](resources/04-restate-cluster.yaml) | the `RestateCluster` — the operator turns it into namespace `restate`, StatefulSet `restate-0..2`, Services `restate` (ClusterIP) + `restate-cluster` (headless), NetworkPolicies | `kubectl apply` |
 | [`resources/05-restate-compute.yaml`](resources/05-restate-compute.yaml) | `RestateDeployment` skeleton in `restate-apps` (versioned ReplicaSets, auto-registration, drain-before-scale-down) | `kubectl apply` |
 
 Grep for **`REPLACE_ME`** under `resources/` before applying: snapshots bucket
-(×2), AWS region, IAM account/role ARN, service image.
+(×2), AWS region, IRSA role ARN, service image.
 
 ## Toolchain
 
