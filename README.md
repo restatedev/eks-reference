@@ -3,8 +3,9 @@
 Configuration for running a **3-node replicated Restate cluster** on EKS with the
 [restate-operator](https://github.com/restatedev/restate-operator), with the SDK
 services (compute) in a **separate namespace**. Sizing/tuning is translated from
-the Restate Cloud profile **`3-node.xlarge`** (3 × 24 CPU / 50 GiB, 48
-partitions, 1 TiB gp3 per node, high-throughput cell tuning).
+the Restate Cloud profile **`3-node.xlarge-vqueues`** (3 × 24 CPU / 50 GiB, 48
+partitions, 1 TiB gp3 per node, high-throughput cell tuning with vqueues
+enabled).
 
 **Start here → [`docs/01-runbook.md`](docs/01-runbook.md).**
 

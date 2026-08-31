@@ -1,7 +1,7 @@
-# Fidelity to the `3-node.xlarge` profile
+# Fidelity to the `3-node.xlarge-vqueues` profile
 
 `resources/04-restate-cluster.yaml` is a translation of the Restate Cloud
-profile `3-node.xlarge` (`restate-cloud/config/profiles.json`, rendered
+profile `3-node.xlarge-vqueues` (`restate-cloud/config/profiles.json`, rendered
 by `restate-clusters.ts`). This doc records what was kept, moved, and dropped —
 read it before "fixing" anything in the cluster manifest that looks unusual.
 
@@ -13,11 +13,19 @@ read it before "fixing" anything in the cluster manifest that looks unusual.
 - **Sizing**: 3 replicas × requests 24 CPU / 50 Gi. Limits are **memory-only on
   purpose** (the profile expresses "no CPU limit"): Restate may burst above 24
   cores when the node has headroom. Don't add a CPU limit.
-- **All tuning env vars**: rocksdb memory/log/perf, bifrost record cache and
-  read path, invoker limits, query engine, journal retention, snapshot cadence
-  (100k records / 5m / 2 retained). Memory budget inside the 50 Gi limit:
-  10 GiB rocksdb + 3 GiB bifrost cache + 6 GiB invoker + 4 GiB query engine =
-  23 GiB accounted, rest is unaccounted-overhead headroom.
+- **All tuning env vars**: rocksdb memory/log/perf/write-rate-cap,
+  deletion-triggered partition-store compaction, bifrost record cache and read
+  path, node-to-node stream window, ingress stream limit, invoker fan-out
+  (20k concurrent invocations × 1 MiB initial buffer), query engine, journal
+  retention, snapshot cadence (100k records / 5m / 2 retained). Memory budget
+  inside the 50 Gi limit: 20 GiB rocksdb (≤60% of it memtables) + 3 GiB
+  bifrost cache + 6 GiB invoker + 4 GiB query engine = 33 GiB accounted, rest
+  is unaccounted-overhead headroom.
+- **vqueues + scoped virtual objects** (`RESTATE_EXPERIMENTAL_ENABLE_VQUEUES`
+  / `…_SCOPED_VIRTUAL_OBJECTS`): enabled together, as they must be — scoped
+  VOs build on vqueues and share their storage format. Both need
+  restate ≥ 1.7.0, and once their records hit disk the cluster can't be rolled
+  back below that version.
 - **Scheduling**: required hostname anti-affinity + preferred zone spread; the
   `cloud.restate.dev/interruptible` toleration (inert unless you taint nodes
   with it).
@@ -34,8 +42,8 @@ read it before "fixing" anything in the cluster manifest that looks unusual.
 - node-state-control readiness-gate sidecar (`nodeStateManagement`)
 - request-signing private key via the AWS Secrets Store CSI provider
 - restate-cloud-ingress network peers, `AWS_EXTERNAL_ID`, storage accounting
-- `NODE_IP` env and the vqueues env vars (this profile is the non-vqueues
-  variant)
+- `NODE_IP` env (part of cloud's shared rendering; nothing in this manifest
+  consumes it)
 
 ## Adapted
 
@@ -53,4 +61,4 @@ read it before "fixing" anything in the cluster manifest that looks unusual.
 - `AWS_REGION` is set explicitly here; cloud leaves region resolution to the
   node's IMDS (its nodes allow pod IMDS access, hop limit 2 — yours might
   not).
-- Provenance label on the CR: `based-on-profile: 3-node.xlarge`.
+- Provenance label on the CR: `based-on-profile: 3-node.xlarge-vqueues`.

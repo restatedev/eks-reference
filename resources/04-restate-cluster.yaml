@@ -2,9 +2,9 @@
 # restate-operator (https://github.com/restatedev/restate-operator).
 #
 # Sizing/tuning is a faithful translation of the Restate Cloud profile
-# `3-node.xlarge` (restate-cloud/config/profiles.json):
+# `3-node.xlarge-vqueues` (restate-cloud/config/profiles.json):
 #   3 replicas x 24 CPU / 50 GiB, 48 partitions, 1 TiB gp3 volume each,
-#   high-throughput production cell tuning.
+#   high-throughput production cell tuning with vqueues enabled.
 #
 # Deliberately dropped from the cloud rendering (cloud-control-plane machinery
 # that doesn't apply to a standalone deployment):
@@ -26,7 +26,7 @@ metadata:
   name: restate
   labels:
     # provenance only: which cloud profile this spec was derived from
-    based-on-profile: 3-node.xlarge
+    based-on-profile: 3-node.xlarge-vqueues
 spec:
   # Operator-managed bootstrap: once the restate-0 pod is Running, the
   # operator calls the ProvisionCluster gRPC API on it (node port 5122) with
@@ -109,10 +109,14 @@ spec:
         value: REPLACE_ME_AWS_REGION
 
       # ---- memory budget (fits inside the 50Gi limit; invoker + rocksdb +
-      # ---- bifrost cache + query engine = 23 GiB accounted, rest is
+      # ---- bifrost cache + query engine = 33 GiB accounted, rest is
       # ---- unaccounted overhead headroom) ----
       - name: RESTATE_ROCKSDB_TOTAL_MEMORY_SIZE
-        value: 10 GiB
+        value: 20 GiB
+      # Of the rocksdb budget, up to 60% may go to memtables (write buffers) —
+      # the write-heavy vqueues workload shifts the balance away from caches.
+      - name: RESTATE_ROCKSDB_TOTAL_MEMTABLES_RATIO
+        value: "0.6"
       - name: RESTATE_BIFROST__RECORD_CACHE_MEMORY_SIZE
         value: 3 GiB
       - name: RESTATE_WORKER__INVOKER__MEMORY_LIMIT
@@ -139,31 +143,58 @@ spec:
         value: enable-time
       - name: RESTATE_ROCKSDB_STATISTICS_LEVEL
         value: except-time-for-mutex
+      # Cap rocksdb write throughput below what the gp3 volume can deliver so
+      # compaction backlog degrades gracefully instead of saturating the disk.
+      - name: RESTATE_ROCKSDB_MAX_WRITE_RATE_PER_SECOND
+        value: 1200 MiB
       # Snapshots + replicated log make the log-server WAL fsync redundant.
       - name: RESTATE_LOG_SERVER__ROCKSDB_DISABLE_WAL_FSYNC
         value: "true"
 
-      # ---- bifrost read path ----
+      # ---- partition-store compaction: vqueues churn through short-lived
+      # ---- keys, so proactively compact SSTs that are mostly tombstones
+      # ---- (>= 30k deletions in a 50k-key window, or half the file, in files
+      # ---- >= 128 MiB) to keep scans from wading through dead entries ----
+      - name: RESTATE_WORKER__STORAGE__ROCKSDB_COMPACT_ON_DELETIONS_MIN_SST_FILE_SIZE
+        value: 128 MiB
+      - name: RESTATE_WORKER__STORAGE__ROCKSDB_COMPACT_ON_DELETIONS_COUNT
+        value: "30000"
+      - name: RESTATE_WORKER__STORAGE__ROCKSDB_COMPACT_ON_DELETIONS_WINDOW
+        value: "50000"
+      - name: RESTATE_WORKER__STORAGE__ROCKSDB_COMPACT_ON_DELETIONS_RATIO
+        value: "0.5"
+
+      # ---- bifrost read path / node-to-node networking ----
       - name: RESTATE_BIFROST__REPLICATED_LOGLET__READ_BATCH_SIZE
-        value: 512 KiB
+        value: 8 MiB
       - name: RESTATE_BIFROST__REPLICATED_LOGLET__READAHEAD_RECORDS
         value: "5000"
+      - name: RESTATE_NETWORKING__DATA_STREAM_WINDOW_SIZE
+        value: 4 MiB
 
-      # ---- invoker ----
+      # ---- invoker: sized for vqueues fan-out — 20k concurrent invocations,
+      # ---- 1 MiB initial buffer each, under the 6 GiB invoker memory limit
+      # ---- above ----
       - name: RESTATE_WORKER__INVOKER__CONCURRENT_INVOCATIONS_LIMIT
-        value: "1000"
+        value: "20000"
+      - name: RESTATE_WORKER__INVOKER__PER_INVOCATION_INITIAL_MEMORY
+        value: 1 MiB
       - name: RESTATE_WORKER__INVOKER__INACTIVITY_TIMEOUT
         value: 600s
       - name: RESTATE_WORKER__INVOKER__HTTP2_STREAMS_PER_CONNECTION_LIMIT
         value: "8"
       - name: RESTATE_WORKER__INVOKER__HTTP2_INITIAL_MAX_SEND_STREAMS
         value: "4"
+      - name: RESTATE_WORKER__INVOKER__HTTP2_IDLE_CONNECTION_TIMEOUT
+        value: 10m
       - name: RESTATE_WORKER__INVOKER__REQUEST_IDENTITY_EXPIRATION
         value: 1d
 
-      # ---- worker batching / query engine ----
-      - name: RESTATE_WORKER__MAX_COMMAND_BATCH_SIZE
-        value: "256"
+      # ---- ingress / query engine ----
+      # Effectively unlimited streams per ingress connection: high-fan-out
+      # clients multiplex many concurrent invocations over few connections.
+      - name: RESTATE_INGRESS__HTTP2_MAX_CONCURRENT_STREAMS
+        value: "1048576"
       - name: RESTATE_ADMIN__QUERY_ENGINE__DATAFUSION_OPTIONS
         value: '{ "datafusion.execution.batch_size" = "256" }'
 
@@ -173,7 +204,14 @@ spec:
         value: "true"
       - name: RESTATE_EXPERIMENTAL_ENABLE_UNIQUE_RANDOM_SEEDS
         value: "true"
-      - name: RESTATE_EXPERIMENTAL_SHUFFLER_BATCH_INGESTION
+      # vqueues + scoped virtual objects must be enabled TOGETHER: scoped VOs
+      # build on vqueues and share their storage format (with vqueues on and
+      # scoped VOs off, the SDK surface that comes with vqueues errors out).
+      # Both need restate >= 1.7.0, and once their records hit disk the
+      # cluster cannot be rolled back below that version.
+      - name: RESTATE_EXPERIMENTAL_ENABLE_VQUEUES
+        value: "true"
+      - name: RESTATE_EXPERIMENTAL_ENABLE_SCOPED_VIRTUAL_OBJECTS
         value: "true"
 
       # ---- partition snapshots to S3 (required for a replicated cluster:
