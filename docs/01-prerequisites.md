@@ -1,88 +1,238 @@
 # Prerequisites
 
-What must exist before running the [runbook](02-runbook.md).
+Complete this checklist before applying either deployment path. The repository
+assumes an existing EKS cluster and does not create networking, worker nodes,
+or cluster access for you.
 
-## EKS cluster
+## Deployment checklist
 
-- **aws-ebs-csi-driver** addon installed — the `restate-gp3` StorageClass
-  ([`resources/03-gp3-storageclass.yaml`](../resources/03-gp3-storageclass.yaml))
-  provisions through it.
-- **3 nodes** with ≥24 allocatable vCPU and ≥50 Gi allocatable memory each,
-  ideally spread across 3 AZs. `m7i.8xlarge` fits comfortably; `c7i.8xlarge`
-  (64 GiB) fits but leaves little memory headroom. Hard pod anti-affinity in
-  the cluster spec puts exactly one restate pod per node, so fewer than 3
-  eligible nodes means pods stay Pending.
-- Restate's data must live on **persistent EBS volumes** that survive node
-  replacement — don't be tempted by instance-store (`*d`) instance types for
-  the restate nodes. With Karpenter, enforce it with a requirement
-  `karpenter.k8s.aws/instance-local-nvme: DoesNotExist` (this is what Restate
-  Cloud does).
-- **VPC CNI network policy enforcement** (`enableNetworkPolicy: true` on the
-  vpc-cni addon — EKS ships with it **off**). Formally optional, but
-  understand what "off" means here: every NetworkPolicy in this stack — the
-  operator's deny-all around the cluster and the restate-apps ingress
-  lockdown — is silently inert, so **any pod in the cluster can reach the
-  unauthenticated admin API (9070, full cluster control) and call SDK
-  endpoints (9080) directly**. Run without enforcement only on a
-  single-tenant cluster where every workload is trusted with exactly that.
-  Verify enforcement is actually on:
+- [ ] The target EKS cluster and API endpoint are reachable from the machine
+      running the deployment.
+- [ ] At least three eligible nodes each have 24 allocatable vCPU and 50 GiB
+      allocatable memory.
+- [ ] The EBS CSI driver is installed and healthy.
+- [ ] Restate data will use persistent EBS, not instance-store volumes.
+- [ ] The NetworkPolicy enforcement choice and its security consequence are
+      understood.
+- [ ] The AWS identity can manage the required S3 and IAM resources.
+- [ ] The Kubernetes identity can create cluster-scoped and namespaced
+      resources and install the operator.
+- [ ] An IAM OIDC provider exists for the EKS cluster, or the chosen path will
+      create it.
+- [ ] A unique, dedicated snapshot bucket name has been chosen.
+- [ ] The EKS cluster name is at most 46 characters so the derived snapshot
+      role name stays within IAM's 64-character limit.
+- [ ] The required tools for one deployment path are installed.
 
-  ```bash
-  aws eks describe-addon --cluster-name "$CLUSTER" --region "$REGION" \
-    --addon-name vpc-cni --query addon.configurationValues
-  kubectl api-resources | grep policyendpoints   # served when enforcement is available
-  ```
+## Set deployment context
 
-## AWS
+The verification commands below use these variables:
 
-- An **S3 bucket** for partition snapshots, **dedicated to this cluster**
-  (this is what Restate Cloud provisions: one bucket per cluster). The
-  manifest's snapshot prefix is the same in every install, and a snapshot
-  repository belongs to exactly one Restate cluster — two clusters sharing a
-  bucket would collide on it. Snapshots are required for a replicated
-  cluster: they let trimmed-log nodes and replacement pods bootstrap from S3
-  instead of replaying the whole log. Create the bucket with public access
-  blocked and SSL enforced; default SSE-S3 encryption is fine, and no
-  lifecycle rules are needed — Restate keeps a bounded number of snapshots
-  per partition (`NUM_RETAINED`).
-- Permissions to create an IAM policy and role, and to associate an OIDC
-  provider with the cluster (for IRSA).
+```bash
+export CLUSTER=...
+export REGION=...
+export ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
+export BUCKET=...   # globally unique; dedicated to this Restate cluster
+```
 
-## Toolchain
+Confirm that the identity and target cluster are the ones you intend to use:
 
-- `aws` — AWS CLI v2 (auth, IAM, S3; kubeconfig uses `aws eks get-token` as an
-  exec plugin, no separate authenticator binary needed)
-- `eksctl` — OIDC provider / IRSA role plumbing
-- `terraform` (≥ 1.5) or `opentofu` — **only for the
-  [Terraform path](../terraform/README.md)**, which replaces the `eksctl`,
-  `helm`, and `kubectl apply` steps below (the `aws` CLI stays: the providers
-  authenticate through it)
-- `kubectl`
-- `helm` — installs the operator chart
-- `jq`
-- `restatectl` — cluster administration (status, logs; manual provisioning
-  fallback). Ships inside the restate image, so the runbook runs it via
-  `kubectl exec` and no local install is required; for a local copy:
+```bash
+aws sts get-caller-identity
+aws eks describe-cluster --name "$CLUSTER" --region "$REGION" \
+  --query 'cluster.{name:name,status:status,version:version,endpoint:endpoint}'
+```
 
-  ```bash
-  npm install -g @restatedev/restatectl
-  ```
+## EKS capacity
 
-- `restate` (optional) — the service-level CLI. Every runbook step works
-  without it by curling the admin API (port 9070) directly; install it with:
+The manifest requests three Restate pods at 24 vCPU and 50 GiB memory each and
+uses required hostname anti-affinity. Kubernetes must find three different
+eligible nodes.
 
-  ```bash
-  npm install -g @restatedev/restate
-  ```
+| Requirement | Why |
+|---|---|
+| 3 eligible nodes | Hard anti-affinity allows one Restate pod per node |
+| ≥24 allocatable vCPU per node | Matches the pod request |
+| ≥50 GiB allocatable memory per node | Matches the request and memory limit |
+| Prefer 3 Availability Zones | Reduces correlated node/AZ failure risk |
+| Persistent EBS support | Restate data must survive node replacement |
 
-## Placeholders
+`m7i.8xlarge` fits comfortably. `c7i.8xlarge` has 64 GiB total memory and fits
+with less kubelet/system headroom. Instance types with local NVMe (`*d`) must
+not be used as a substitute for the persistent EBS volumes.
 
-Grep for **`REPLACE_ME`** under `resources/` before applying anything:
+Inspect current allocatable capacity and placement labels:
 
-| Placeholder | Where | Meaning |
+```bash
+kubectl get nodes -L topology.kubernetes.io/zone \
+  -o custom-columns='NAME:.metadata.name,CPU:.status.allocatable.cpu,MEMORY:.status.allocatable.memory,ZONE:.metadata.labels.topology\.kubernetes\.io/zone'
+```
+
+With Karpenter, prevent instance-store-backed Restate nodes by requiring:
+
+```yaml
+- key: karpenter.k8s.aws/instance-local-nvme
+  operator: DoesNotExist
+```
+
+## EBS CSI driver
+
+The `restate-gp3` StorageClass provisions volumes through
+`ebs.csi.aws.com`. Confirm the add-on and controller are healthy:
+
+```bash
+aws eks describe-addon --cluster-name "$CLUSTER" --region "$REGION" \
+  --addon-name aws-ebs-csi-driver \
+  --query 'addon.{status:status,version:addonVersion}'
+kubectl -n kube-system get deployment ebs-csi-controller
+```
+
+If the add-on uses IRSA, the cluster already has an IAM OIDC provider in most
+installations. The Terraform path looks that provider up by default.
+
+## Network isolation
+
+The manifests create NetworkPolicies around both the Restate cluster and SDK
+services. EKS VPC CNI NetworkPolicy enforcement is **off by default**.
+
+Running without enforcement is formally supported, but it changes the trust
+model completely: the policies are inert, every pod in the EKS cluster can
+reach the unauthenticated Restate admin API on port 9070, and every pod can call
+SDK endpoints on port 9080 directly. Only accept that on a single-tenant
+cluster where every workload is trusted with those capabilities.
+
+Inspect the add-on configuration and API support:
+
+```bash
+aws eks describe-addon --cluster-name "$CLUSTER" --region "$REGION" \
+  --addon-name vpc-cni --query addon.configurationValues
+kubectl api-resources | grep policyendpoints
+```
+
+The add-on setting is `enableNetworkPolicy: true` (represented as
+`ENABLE_NETWORK_POLICY=true` in the `aws-node` DaemonSet). Seeing
+NetworkPolicy objects alone does not prove enforcement.
+
+## AWS resources and permissions
+
+### Snapshot bucket
+
+The bucket must be dedicated to this Restate cluster. The configured snapshot
+path is always:
+
+```text
+s3://<bucket>/restate/snapshots/
+```
+
+A snapshot repository belongs to one Restate cluster. Do not point two
+clusters at the same bucket/prefix.
+
+The manual path expects the bucket to exist already with:
+
+- all public access blocked;
+- HTTPS-only access enforced;
+- default SSE-S3 encryption (AWS enables this for new objects);
+- no bucket lifecycle rule deleting live snapshot objects.
+
+The Terraform path creates those bucket controls and leaves `force_destroy`
+disabled.
+
+### IAM and IRSA
+
+The deploying identity needs enough AWS permission to:
+
+- read the EKS cluster and its OIDC issuer;
+- create or read the IAM OIDC provider;
+- create the cluster-qualified snapshot policy and role;
+- attach the policy to the role;
+- create and configure the S3 bucket on the Terraform path.
+
+The snapshot role trusts only:
+
+```text
+system:serviceaccount:restate:restate
+```
+
+The derived role name is `<cluster>-restate-snapshots`. The suffix consumes 18
+of IAM's 64 allowed characters, so this repository limits `cluster_name` to 46
+characters.
+
+## Kubernetes and Helm access
+
+Valid AWS credentials do not automatically grant Kubernetes authorization.
+The identity used by `kubectl`, Helm, and the Terraform Kubernetes provider
+must have an EKS access entry or `aws-auth` mapping with permission to manage:
+
+- namespaces;
+- cluster-scoped StorageClasses;
+- NetworkPolicies;
+- Helm releases, Deployments, and related namespaced resources;
+- `RestateCluster` and `RestateDeployment` custom resources after the CRDs are
+  installed.
+
+Basic checks:
+
+```bash
+aws eks update-kubeconfig --name "$CLUSTER" --region "$REGION"
+kubectl cluster-info
+kubectl auth can-i create namespaces
+kubectl auth can-i create storageclasses.storage.k8s.io
+kubectl auth can-i create networkpolicies.networking.k8s.io --all-namespaces
+```
+
+All three authorization checks should return `yes` for the manual path. The
+Terraform path uses `aws eks get-token` directly, but needs equivalent access.
+
+## Tooling
+
+Choose one path; you do not need every tool in both columns.
+
+| Tool | Manual path | Terraform path | Purpose |
+|---|:---:|:---:|---|
+| AWS CLI v2 | ✓ | ✓ | Identity, EKS lookup, IAM, S3, exec auth |
+| `kubectl` | ✓ | recommended | Apply and diagnose Kubernetes resources |
+| `eksctl` | ✓ | — | OIDC provider and IRSA role plumbing |
+| Helm | ✓ | — | Install the Restate operator |
+| Terraform ≥1.5 or OpenTofu | — | ✓ | Apply the two Terraform stages |
+| `jq` | ✓ | recommended | Format API responses |
+| `restatectl` | via pod | via pod | Cluster status, provisioning, snapshots |
+| `restate` CLI | optional | optional | Service/deployment administration |
+
+An optional Nix development shell is provided:
+
+```bash
+nix-shell
+```
+
+`restatectl` is already present in the Restate image, so the guides run it with
+`kubectl exec`. Local installations are optional:
+
+```bash
+npm install -g @restatedev/restatectl
+npm install -g @restatedev/restate
+```
+
+## Manual-path placeholders
+
+Before using the manual runbook, replace every `REPLACE_ME_*` value under
+`resources/`:
+
+```bash
+grep -RIn 'REPLACE_ME' resources
+```
+
+| Placeholder | Files | Value |
 |---|---|---|
-| `REPLACE_ME_SNAPSHOTS_BUCKET` | `01-restate-snapshots-iam-policy.json`, `04-restate-cluster.yaml` | the snapshots S3 bucket name |
-| `REPLACE_ME_AWS_REGION` | `04-restate-cluster.yaml` | region for the AWS SDK (S3 snapshots) — explicit so pods don't depend on IMDS reachability |
-| `REPLACE_ME_SNAPSHOTS_ROLE_ARN` | `04-restate-cluster.yaml` | the IRSA role ARN from [runbook step 2](02-runbook.md) (`arn:aws:iam::<account>:role/<cluster>-restate-snapshots`) |
-| `REPLACE_ME_SERVICE_IMAGE` | `05-restate-compute.yaml` | the SDK service container image |
-| `REPLACE_ME_EKS_CLUSTER_NAME` | `02-restate-operator.values.yaml` (commented) | only for the Pod Identity alternative |
+| `REPLACE_ME_SNAPSHOTS_BUCKET` | `01-restate-snapshots-iam-policy.json`, `04-restate-cluster.yaml` | Dedicated snapshot bucket name |
+| `REPLACE_ME_AWS_REGION` | `04-restate-cluster.yaml` | Region used by the Restate AWS SDK |
+| `REPLACE_ME_SNAPSHOTS_ROLE_ARN` | `04-restate-cluster.yaml` | `arn:aws:iam::<account>:role/<cluster>-restate-snapshots` |
+| `REPLACE_ME_SERVICE_IMAGE` | `05-restate-compute.yaml` | SDK service image; apply compute only after setting it |
+| `REPLACE_ME_EKS_CLUSTER_NAME` | `02-restate-operator.values.yaml` (commented) | Only for the EKS Pod Identity alternative |
+
+The Terraform path does not modify the files. It replaces the required values
+in memory from `terraform.tfvars`.
+
+## Next step
+
+- For Terraform or OpenTofu, continue to the [Terraform guide](../terraform/README.md).
+- For CLI-driven installation, continue to the [manual runbook](02-runbook.md).

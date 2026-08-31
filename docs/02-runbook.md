@@ -1,162 +1,305 @@
-# Runbook
+# Manual deployment runbook
 
-Apply the files in [`resources/`](../resources/) in numeric order. Each step
-below names the resource it consumes. Check
-[prerequisites](01-prerequisites.md) and fill every `REPLACE_ME` first.
+This runbook installs the reference stack with AWS CLI, eksctl, Helm, and
+kubectl. It favors visible, verifiable steps over automation.
 
-Prefer Terraform? [`terraform/`](../terraform/README.md) is this same runbook
-as two `apply`s, consuming the same `resources/` files.
+For a state-managed installation, use the [Terraform guide](../terraform/README.md)
+instead. Do not run both paths against the same resources unless you first
+import the manual resources into Terraform state.
 
-## 0. Auth + kubeconfig
+## Before you begin
+
+1. Complete the [prerequisite checklist](01-prerequisites.md#deployment-checklist).
+2. Run commands from the repository root.
+3. Work on a branch or copy so placeholder substitutions remain reviewable.
+4. Confirm that your current AWS identity and Kubernetes context point to the
+   intended environment.
+
+Set the shared values once:
 
 ```bash
-export CLUSTER=...  REGION=...  ACCOUNT=...  BUCKET=...
+export CLUSTER=...
+export REGION=...
+export ACCOUNT="$(aws sts get-caller-identity --query Account --output text)"
+export BUCKET=...
 
-aws sts get-caller-identity            # sanity
+aws sts get-caller-identity
 aws eks update-kubeconfig --name "$CLUSTER" --region "$REGION"
+kubectl config current-context
+kubectl cluster-info
 ```
 
-## 1. Namespaces — `resources/00-namespaces.yaml`
+Stop if the account, cluster, or context is not the intended target.
 
-Creates `restate-operator` (helm target) and `restate-apps` (compute), plus a
-NetworkPolicy on `restate-apps` so only the Restate cluster can call the SDK
-services (nothing else should reach an SDK endpoint directly). The `restate`
-namespace is **not** here — the operator creates it from the RestateCluster in
-step 4.
+## Prepare the manifests
+
+Replace the manual-path placeholders listed in
+[Prerequisites](01-prerequisites.md#manual-path-placeholders). At minimum:
+
+- replace `REPLACE_ME_SNAPSHOTS_BUCKET` in the cluster manifest; step 2 renders
+  a temporary IAM policy from the canonical JSON without modifying that file;
+- replace `REPLACE_ME_AWS_REGION` in the cluster manifest;
+- replace `REPLACE_ME_SNAPSHOTS_ROLE_ARN` after step 2;
+- leave `resources/05-restate-compute.yaml` unapplied until its service image
+  is set.
+
+Check before every apply:
+
+```bash
+grep -RIn 'REPLACE_ME' resources
+git diff -- resources
+```
+
+The IAM policy's bucket token, the unapplied compute image, and the commented
+`REPLACE_ME_EKS_CLUSTER_NAME` may still appear at this point. Before each step,
+confirm that the specific file or rendered payload being applied has no active
+placeholder. The EKS cluster-name token is only activated for the EKS Pod
+Identity alternative.
+
+## Step 1: Create repository-owned namespaces
+
+Apply `resources/00-namespaces.yaml`:
 
 ```bash
 kubectl apply -f resources/00-namespaces.yaml
+kubectl get namespace restate-operator restate-apps
+kubectl -n restate-apps get networkpolicy
 ```
 
-## 2. IAM for snapshots (IRSA) — `resources/01-restate-snapshots-iam-policy.json`
+This creates:
 
-The operator will create ServiceAccount `restate` in namespace `restate`;
-`security.serviceAccountAnnotations` in `resources/04-restate-cluster.yaml`
-binds it to the role created here.
+- `restate-operator`, the Helm target;
+- `restate-apps`, where SDK services run;
+- the `restate-apps` ingress policy, allowing calls only from the future
+  `restate` namespace.
+
+Do not create the `restate` namespace. The operator creates and owns it when
+the `RestateCluster` is applied.
+
+## Step 2: Configure snapshot IAM
+
+The Restate pods use a ServiceAccount named `restate` in namespace `restate`.
+Create a cluster-qualified IAM policy and IRSA role for that exact subject.
+
+First ensure the EKS IAM OIDC provider exists. This command is safe when the
+provider is already associated:
 
 ```bash
-# once per cluster
-eksctl utils associate-iam-oidc-provider --cluster "$CLUSTER" --region "$REGION" --approve
-
-sed "s/REPLACE_ME_SNAPSHOTS_BUCKET/$BUCKET/" \
-  resources/01-restate-snapshots-iam-policy.json > /tmp/policy.json
-
-# Cluster-qualified names: IAM policies/roles are account-global, and the
-# role's IRSA trust is tied to THIS cluster's OIDC provider — a second EKS
-# cluster in the account needs its own pair (and its own bucket, see step 4).
-aws iam create-policy --policy-name "${CLUSTER}-restate-snapshots" \
-  --policy-document file:///tmp/policy.json
-
-# --role-only: the operator owns the ServiceAccount, we only need the role + trust policy
-eksctl create iamserviceaccount --cluster "$CLUSTER" --region "$REGION" \
-  --namespace restate --name restate \
-  --role-name "${CLUSTER}-restate-snapshots" \
-  --attach-policy-arn "arn:aws:iam::$ACCOUNT:policy/${CLUSTER}-restate-snapshots" \
-  --role-only --approve
+eksctl utils associate-iam-oidc-provider \
+  --cluster "$CLUSTER" \
+  --region "$REGION" \
+  --approve
 ```
 
-Then fill the role ARN —
-`arn:aws:iam::$ACCOUNT:role/${CLUSTER}-restate-snapshots` — into
-`resources/04-restate-cluster.yaml` → `security.serviceAccountAnnotations`
-(`REPLACE_ME_SNAPSHOTS_ROLE_ARN`).
+Render and create the snapshot policy:
 
-Rerunning this step: `create-policy` fails if the policy exists — update it
-with `aws iam create-policy-version --set-as-default` instead. The role lives
-in an eksctl-owned CloudFormation stack; change it with
-`eksctl update iamserviceaccount` (same flags), not a second `create`.
+```bash
+sed "s/REPLACE_ME_SNAPSHOTS_BUCKET/$BUCKET/" \
+  resources/01-restate-snapshots-iam-policy.json > /tmp/restate-snapshot-policy.json
 
-Naming limit: IAM role names cap at 64 characters and the
-`-restate-snapshots` suffix takes 18, so this scheme needs `$CLUSTER` ≤ 46
-characters (EKS itself allows up to 100 — the Terraform path validates this,
-here you get an IAM error at role creation).
+aws iam create-policy \
+  --policy-name "${CLUSTER}-restate-snapshots" \
+  --policy-document file:///tmp/restate-snapshot-policy.json
+```
 
-*Alternative (what Restate Cloud itself runs):* operator-managed EKS Pod
-Identity — see [architecture](00-architecture.md#iam-for-snapshots).
+Create only the IAM role and trust relationship. The operator will create the
+Kubernetes ServiceAccount later:
 
-## 3. Operator — `resources/02-restate-operator.values.yaml`
+```bash
+eksctl create iamserviceaccount \
+  --cluster "$CLUSTER" \
+  --region "$REGION" \
+  --namespace restate \
+  --name restate \
+  --role-name "${CLUSTER}-restate-snapshots" \
+  --attach-policy-arn "arn:aws:iam::$ACCOUNT:policy/${CLUSTER}-restate-snapshots" \
+  --role-only \
+  --approve
+```
 
-This one is a helm values file, not a kubectl manifest:
+The name `${CLUSTER}-restate-snapshots` must fit IAM's 64-character role-name
+limit. Because the suffix is 18 characters, `$CLUSTER` must be no longer than
+46 characters.
+
+Replace `REPLACE_ME_SNAPSHOTS_ROLE_ARN` in
+`resources/04-restate-cluster.yaml` with:
+
+```text
+arn:aws:iam::<account>:role/<cluster>-restate-snapshots
+```
+
+Verify the role and attached policy:
+
+```bash
+aws iam get-role --role-name "${CLUSTER}-restate-snapshots" \
+  --query 'Role.{arn:Arn,trust:AssumeRolePolicyDocument}'
+aws iam list-attached-role-policies \
+  --role-name "${CLUSTER}-restate-snapshots"
+```
+
+### Rerunning the IAM step
+
+`aws iam create-policy` fails when the named policy already exists. Update an
+existing policy with a new policy version rather than trying to create it
+again. The eksctl-created role lives in an eksctl-managed CloudFormation stack;
+change it with `eksctl update iamserviceaccount` using the same identity flags.
+
+For the EKS Pod Identity alternative, see
+[Architecture: IAM for snapshots](00-architecture.md#iam-for-snapshots).
+
+## Step 3: Install the Restate operator
+
+`resources/02-restate-operator.values.yaml` is a Helm values file, not a
+Kubernetes manifest:
 
 ```bash
 helm upgrade --install restate-operator \
   oci://ghcr.io/restatedev/restate-operator-helm \
   --version 3.0.1 \
   --namespace restate-operator \
-  -f resources/02-restate-operator.values.yaml
+  --values resources/02-restate-operator.values.yaml \
+  --wait \
+  --timeout 5m
 ```
 
-CRDs ship with the chart and upgrade with it (v3+). Nothing else to install —
-no cert-manager.
+Verify the controller and CRDs:
 
-## 4. Storage class + cluster — `resources/03-…` and `resources/04-…`
+```bash
+kubectl -n restate-operator get deployment,pods
+kubectl get crd restateclusters.restate.dev restatedeployments.restate.dev
+```
+
+The v3 chart installs and upgrades its CRDs. It does not require cert-manager.
+
+## Step 4: Create storage and the Restate cluster
+
+Apply the StorageClass first and inspect it before creating PVCs:
 
 ```bash
 kubectl apply -f resources/03-gp3-storageclass.yaml
+kubectl get storageclass restate-gp3 -o yaml
+```
+
+The expected class uses encrypted XFS, 6000 IOPS, 500 MiB/s,
+`WaitForFirstConsumer`, and `reclaimPolicy: Retain`.
+
+Confirm that no active placeholder remains in the cluster manifest, then apply
+it:
+
+```bash
+grep -n 'REPLACE_ME' resources/04-restate-cluster.yaml
 kubectl apply -f resources/04-restate-cluster.yaml
-
-kubectl -n restate get pods -w          # restate-0..2 -> Running
 ```
 
-The pods come up **unprovisioned** (`auto-provision = false` in the config
-TOML) and wait. The **operator bootstraps the cluster**: once `restate-0` is
-Running it calls the ProvisionCluster gRPC API with no explicit parameters,
-so the config TOML's defaults apply — 48 partitions, `{node: 2}` replication —
-and the pods then turn Ready. Verify:
+Watch the operator-owned namespace come online:
 
 ```bash
-kubectl get restatecluster restate -o jsonpath='{.status.provisioned}'  # true
-kubectl -n restate exec restate-0 -- restatectl status   # nodes, logs, partitions
+kubectl get restatecluster restate -w
 ```
 
-Then prove the snapshot path (IAM role, region, bucket) end to end. Automatic
-snapshots only fire once a partition has seen **both** 100k records **and**
-5 minutes, so a misconfigured role would otherwise surface much later:
+In another shell:
 
 ```bash
-kubectl -n restate exec restate-0 -- restatectl snapshots create-snapshot
-aws s3 ls "s3://$BUCKET/restate/snapshots/" --recursive | head
+kubectl -n restate get pods,pvc -w
 ```
 
-The `restate/snapshots` prefix is fixed by the manifest, which is why the
-bucket must be **dedicated to this cluster**: a snapshot repository belongs to
-exactly one Restate cluster, and a second cluster pointed at the same prefix
-fails repository validation rather than silently mixing.
+The sequence is expected to be:
 
-Manual fallback if you ever need it (`restatectl` ships in the restate image;
-safe to re-run — an already-provisioned cluster is reported, not
-re-initialized):
+1. `restate-0..2` are scheduled on different nodes;
+2. EBS PVCs bind in each pod's Availability Zone;
+3. pods start unprovisioned and form the metadata cluster;
+4. the operator provisions 48 partitions with node replication 2;
+5. all three pods become Ready and the CR reports `Ready=True`.
+
+Wait and verify:
+
+```bash
+kubectl wait --for=condition=Ready restatecluster/restate --timeout=15m
+kubectl get restatecluster restate \
+  -o jsonpath='{.status.provisioned}{"\n"}'
+kubectl -n restate get pods -o wide
+kubectl -n restate exec restate-0 -- restatectl status
+```
+
+If automatic provisioning fails after the pods are Running, the manual command
+is idempotent:
 
 ```bash
 kubectl -n restate exec restate-0 -- restatectl provision --yes
 ```
 
-## 5. Compute — `resources/05-restate-compute.yaml`
+For the full sequence, see
+[Architecture: Cluster bootstrap](00-architecture.md#cluster-bootstrap-sequence).
 
-Set the image, then:
+## Step 5: Prove snapshots work
+
+Do not wait for the automatic cadence: it needs both 100,000 records and five
+minutes. Trigger a snapshot and confirm objects reach the dedicated bucket:
 
 ```bash
-kubectl apply -f resources/05-restate-compute.yaml
-kubectl -n restate-apps get restatedeployments   # READY + registered
+kubectl -n restate exec restate-0 -- \
+  restatectl snapshots create-snapshot
+aws s3 ls "s3://$BUCKET/restate/snapshots/" --recursive | head
 ```
 
-The operator registers each revision with the cluster's admin API itself and
-labels the pods `allow.restate.dev/restate: "true"`, which the cluster's
-egress NetworkPolicy matches — cross-namespace invocation needs no extra
-config (details in [architecture](00-architecture.md#cross-namespace-networking)).
-Versioning, draining and rollback of these services:
-[deploying services](03-deploying-services.md).
+This checks the ServiceAccount annotation, OIDC trust, IAM policy, AWS region,
+network egress, bucket, and Restate snapshot configuration together. Do not
+continue to production use until it succeeds.
 
-## 6. Poke it
+## Step 6: Deploy an SDK service (optional)
+
+Skip this step if you only need the Restate cluster.
+
+Set `REPLACE_ME_SERVICE_IMAGE` in `resources/05-restate-compute.yaml` to an
+image that listens on port 9080, then apply it:
 
 ```bash
-# svc/restate is the ClusterIP Service carrying 8080 + 9070; svc/restate-cluster
-# is the headless node-to-node Service and only has 5122.
-kubectl -n restate port-forward svc/restate 8080:8080 9070:9070 &
-curl localhost:9070/services | jq       # admin API (or: restate services list)
+grep -n 'REPLACE_ME' resources/05-restate-compute.yaml
+kubectl apply -f resources/05-restate-compute.yaml
+kubectl -n restate-apps get restatedeployments,pods -w
+```
+
+The operator creates a versioned ReplicaSet and Service, registers the
+revision, and reports the `RestateDeployment` Ready. It also labels the pods so
+the Restate namespace may invoke them through the enforced NetworkPolicy.
+
+Read [Deploying services](03-deploying-services.md) before rolling out a second
+version or deleting an old ReplicaSet.
+
+## Step 7: Test ingress and admin access
+
+Forward the ClusterIP Service, not the headless node Service:
+
+```bash
+kubectl -n restate port-forward svc/restate 8080:8080 9070:9070
+```
+
+In another shell:
+
+```bash
+curl --fail --silent localhost:9070/services | jq
 curl localhost:8080/MyService/myHandler --json '{}'
 ```
 
-Port-forward tunnels through the kubelet, so the deny-all NetworkPolicies
-don't apply — this is the intended path to the admin API, which has no
-authentication and is deliberately not network-exposed to workloads
-(see [architecture](00-architecture.md#cross-namespace-networking)).
+`svc/restate-cluster` is headless and carries node traffic on port 5122; it does
+not expose ports 8080 or 9070.
+
+The port-forward tunnels through the kubelet and bypasses NetworkPolicy. This
+is the intended operator access path for the unauthenticated admin API. Never
+publish port 9070 directly.
+
+## Completion checklist
+
+- [ ] `RestateCluster/restate` is provisioned and Ready.
+- [ ] Three Restate pods are Ready on different nodes.
+- [ ] Three PVCs are Bound through `restate-gp3`.
+- [ ] `restatectl status` reports healthy nodes, logs, and partitions.
+- [ ] A manual snapshot succeeded and objects exist in S3.
+- [ ] `svc/restate` is still a ClusterIP.
+- [ ] NetworkPolicy enforcement matches the trust decision made in the
+      prerequisites.
+- [ ] If deployed, the SDK service is Ready and registered.
+- [ ] No active `REPLACE_ME_*` value remains in an applied file.
+
+Continue with [Operations and troubleshooting](05-operations.md) for routine
+checks, changes, recovery boundaries, and teardown.

@@ -17,7 +17,7 @@ locals {
   }
 
   # the restate-apps inbound-isolation policy (why it exists: comments in the
-  # YAML, and docs/00-architecture.md#cross-namespace-networking)
+  # YAML, and docs/00-architecture.md#traffic-and-trust-boundaries)
   network_policies = {
     for m in local.namespace_file_docs :
     "${m.metadata.namespace}/${m.metadata.name}" => m if m.kind == "NetworkPolicy"

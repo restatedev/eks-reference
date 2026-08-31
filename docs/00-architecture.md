@@ -1,140 +1,292 @@
 # Architecture
 
-How the pieces fit together, and the operator mechanics the manifests rely on.
-Source of truth for operator behavior:
-[restatedev/restate-operator](https://github.com/restatedev/restate-operator)
-(claims below were verified against its source at chart v3.0.1).
+This document explains what the deployment creates, which component owns each
+resource, how traffic is allowed, and how a fresh three-node Restate cluster
+becomes usable.
 
-## Topology
+The operator behavior described here was verified against the
+[Restate operator](https://github.com/restatedev/restate-operator) at Helm chart
+version `3.0.1`.
 
+## Design summary
+
+- A `RestateCluster` named `restate` produces an operator-owned namespace of
+  the same name.
+- Three Restate pods run as one StatefulSet with one pod per Kubernetes node.
+- Each pod has a 1 TiB EBS volume; partition snapshots are written to a
+  cluster-dedicated S3 bucket.
+- The operator, not an individual Restate node, provisions the cluster exactly
+  once.
+- SDK services run as `RestateDeployment` resources in `restate-apps`, outside
+  the operator-owned namespace.
+- Port 8080 is the client ingress API. Port 9070 is an unauthenticated admin API
+  and is intentionally restricted to the operator and local port-forward use.
+- NetworkPolicies provide the isolation boundary only when the cluster CNI
+  enforces them.
+
+## Logical topology
+
+```text
+namespace: restate-operator
+  └─ Deployment/restate-operator
+       │ watches RestateCluster and RestateDeployment resources
+       │ provisions the cluster and registers service revisions
+       ▼
+
+namespace: restate                         operator-owned lifecycle
+  ├─ StatefulSet/restate
+  │    ├─ restate-0 ── PVC ── EBS
+  │    ├─ restate-1 ── PVC ── EBS
+  │    └─ restate-2 ── PVC ── EBS
+  ├─ Service/restate                       ClusterIP
+  │    ├─ :8080 ingress
+  │    ├─ :9070 admin
+  │    └─ :5122 metrics
+  ├─ Service/restate-cluster               headless, node traffic :5122
+  ├─ ServiceAccount/restate                IRSA role annotation
+  └─ NetworkPolicies                       default deny + explicit allowances
+
+namespace: restate-apps                    repository/user-owned lifecycle
+  ├─ RestateDeployment/service
+  ├─ ReplicaSet + Service per revision
+  └─ NetworkPolicy                         ingress from namespace restate only
+
+Restate pods ── IRSA ──► dedicated S3 snapshot bucket
 ```
-namespace: restate-operator     the operator Deployment (helm)
-namespace: restate              created BY the operator from the RestateCluster CR
-  ├─ StatefulSet restate        pods restate-0..2, one per node (hard anti-affinity)
-  ├─ Service restate            ClusterIP; 8080 (ingress), 9070 (admin), 5122 (metrics)
-  ├─ Service restate-cluster    headless; 5122 node-to-node (stable per-pod DNS)
-  ├─ ServiceAccount restate     IRSA-annotated for S3 snapshot access
-  └─ NetworkPolicies            deny-all default + carve-outs (see below)
-namespace: restate-apps         ours; SDK services as RestateDeployments,
-                                ingress locked to the restate namespace
+
+## Ownership and deletion boundaries
+
+Understanding ownership matters because deleting a parent resource can remove
+an entire layer below it.
+
+| Resource | Owner | Lifecycle consequence |
+|---|---|---|
+| Existing EKS cluster, VPC, nodes | Outside this repository | Never created or destroyed here |
+| IAM OIDC provider | Existing cluster by default; optionally Terraform stage 01 | Shared by IRSA workloads; do not delete casually |
+| Snapshot bucket and Restate IAM role | Operator/platform team or Terraform stage 01 | Bucket is dedicated to one Restate cluster |
+| `restate-operator` namespace | This repository / Terraform stage 01 | Contains the operator Helm release |
+| `restate-apps` namespace | This repository / Terraform stage 01 | Contains user SDK service revisions |
+| `restate` namespace | Restate operator | Created and deleted with `RestateCluster/restate` |
+| StatefulSet, Services, ServiceAccount, cluster policies | Restate operator | Reconciled from the `RestateCluster` spec |
+| PVCs | Restate operator through the StatefulSet | Deleted with the operator-owned namespace |
+| EBS PVs | `restate-gp3` StorageClass / EBS CSI driver | Retained after PVC deletion; recovery is manual |
+
+Do not create the `restate` namespace yourself. The operator expects to own its
+full lifecycle.
+
+## Traffic and trust boundaries
+
+The operator starts from deny-all ingress and egress in the `restate`
+namespace. It then opens node-to-node traffic on 5122, operator-to-admin
+traffic needed for provisioning and registration, DNS, public-internet egress,
+and egress to labeled `RestateDeployment` pods. Private ranges remain excluded
+from the general egress allowance.
+
+| Source | Destination | Port | Allowed by | Purpose |
+|---|---|---:|---|---|
+| Clients | `Service/restate` | 8080 | How you expose ingress | Invoke Restate handlers |
+| Human operator | `Service/restate` | 9070 | `kubectl port-forward` | Admin and diagnostics |
+| Restate operator | Restate admin API | 9070 | Operator-specific policy carve-out | Provision cluster; register revisions |
+| Restate pods | Restate pods | 5122 | Operator-generated policy | Metadata and node traffic |
+| Restate pods | SDK service revisions | 9080 | Operator-applied labels and egress policy | Execute invocations |
+| SDK service namespace | Restate ingress | 8080 | `security.networkPeers.ingress` | Optional in-cluster calls into Restate |
+| Restate pods | AWS STS and S3 | HTTPS | Public egress policy and IRSA | Credentials and snapshots |
+
+The cross-namespace model is easiest to reason about as three distinct
+directions:
+
+1. **Restate cluster → SDK services:** automatic for `RestateDeployment` pods.
+   The operator adds `allow.restate.dev/<cluster-name>: "true"`, and the
+   cluster egress policy selects that label in any namespace.
+2. **SDK services → Restate cluster:** not automatic. The manifest explicitly
+   allows the `restate-apps` namespace to reach ingress on port 8080. It does
+   not allow that namespace to reach admin on port 9070.
+3. **Other workloads → SDK services:** denied by the repository-owned policy
+   selecting every pod in `restate-apps` and allowing only the `restate`
+   namespace. This prevents direct calls that bypass Restate.
+
+### Admin API
+
+The admin API on port 9070 has no authentication and grants full cluster
+control, including deployment registration/deletion and SQL access to state.
+The manifests therefore do **not** add `restate-apps` as an admin peer.
+
+The operator receives its own built-in admin carve-out through
+`allowOperatorAccessToAdmin` (enabled by default). Humans use
+`kubectl port-forward` or `kubectl exec`; these paths tunnel through the
+kubelet and do not require opening the admin port to workloads. Restate Cloud
+similarly exposes admin only through its own authenticating gateway.
+
+### SDK service isolation
+
+The operator adds `allow.restate.dev/restate: "true"` to pods belonging to a
+`RestateDeployment` registered with this cluster. The Restate namespace egress
+policy selects that label in any namespace, allowing invocation traffic to
+port 9080.
+
+The reverse boundary is owned here: `resources/00-namespaces.yaml` selects all
+pods in `restate-apps` and admits ingress only from the `restate` namespace.
+That stops unrelated cluster workloads calling an SDK endpoint directly and
+bypassing Restate.
+
+### CNI enforcement
+
+Kubernetes accepts NetworkPolicy objects even when no network-policy engine is
+enforcing them. EKS VPC CNI enforcement is disabled by default. With it off,
+the policy objects are visible but inert: every pod can reach ports 9070 and
+9080.
+
+The deployment can function without enforcement only when the EKS cluster is
+single-tenant and every workload is trusted with Restate administration and
+direct SDK access. See [Prerequisites](01-prerequisites.md#network-isolation).
+
+### Private AWS endpoints
+
+The operator-generated default egress policy allows public destinations while
+excluding private ranges (`10/8`, `172.16/12`, `192.168/16`, and
+`169.254/16`). This has two AWS-specific consequences:
+
+- an S3 **Gateway** endpoint works because routing changes while the S3
+  destination addresses remain public;
+- an STS or S3 **Interface** endpoint resolves to private VPC addresses and is
+  blocked unless those addresses are explicitly allowed with
+  `networkEgressRules` on the `RestateCluster`.
+
+If IRSA works on the node but snapshot credentials time out inside the Restate
+pod, inspect private DNS and interface endpoints before changing IAM policy.
+
+## Cluster bootstrap sequence
+
+A fresh replicated cluster needs stable peer addresses and node IDs before it
+can be provisioned. The manifest and operator divide that work deliberately:
+
+```text
+1. StatefulSet starts restate-0..2
+2. each pod derives the same metadata peer list from stable StatefulSet DNS
+3. each pod derives a stable node ID from its pod index
+4. Restate nodes form the metadata cluster but do not self-provision
+5. operator sees restate-0 Running
+6. operator calls ProvisionCluster once
+7. configured defaults create 48 partitions with node replication 2
+8. pods become Ready and RestateCluster reports provisioned/Ready
 ```
 
-## What the operator does with a RestateCluster
+The key settings are:
 
-From `resources/04-restate-cluster.yaml` the operator materializes a namespace
-**named after the CR** (`restate`), the StatefulSet, the headless Service, the
-ServiceAccount, and the NetworkPolicies. Two behaviors the manifest depends on:
+- `auto-provision = false` in the Restate config, so no node races to initialize
+  state;
+- `spec.cluster.autoProvision: true`, so the operator performs the one-time
+  provisioning call;
+- `default-num-partitions = 48` and
+  `default-replication = { node = 2 }`, used by that call.
 
-- **Env override-by-name**: the operator injects defaults (`POD_NAME` via the
-  downward API, `RESTATE_ADVERTISED_ADDRESS=http://$(POD_NAME).restate-cluster:5122`,
-  …); anything in `spec.compute.env` with the same name **replaces** the
-  default. We override `RESTATE_ADVERTISED_ADDRESS` with the fully-qualified
-  form and rely on the injected `POD_NAME`.
-- **K8s `$(VAR)` expansion is order-sensitive**: `POD_NAMESPACE` is declared
-  first in the env list because later values reference `$(POD_NAMESPACE)`.
+The operator waits for `restate-0` to be **Running**, deliberately not Ready
+because Restate pods become Ready only after provisioning. It calls the
+`ProvisionCluster` gRPC API through the headless Service with no explicit
+parameters, so the contacted node's configured partition and replication
+defaults apply.
 
-## Replicated-metadata bootstrap
+The operator validates that server self-provisioning is disabled and rejects
+the configuration unless the TOML contains `auto-provision = false` or the
+equivalent `RESTATE_AUTO_PROVISION=false` environment setting. No node can race
+the operator to initialize cluster state.
 
-A replicated metadata cluster has a chicken-and-egg problem: everyone must
-agree on addresses and node ids, and someone must provision — exactly once.
+The operator treats “already provisioned” as success and caches the outcome in
+`status.provisioned`, so it performs the initialization at most once per
+cluster. The manual fallback, `restatectl provision --yes`, is therefore safe
+to retry.
 
-**Pods start and wait.** The container command in `04-restate-cluster.yaml`
-(adapted from Restate Cloud's startup wrapper) computes the per-pod values a
-StatefulSet's single pod template can't express as plain env:
+Restate Cloud's startup wrapper instead lets only pod 0 self-provision on first
+boot. Operator-managed provisioning was chosen here so initialization is
+driven by the custom-resource controller rather than by pod startup code.
 
-- `RESTATE_METADATA_CLIENT__ADDRESSES` built from `REPLICAS` (all three pods'
-  stable DNS names),
-- a stable node id (`RESTATE_FORCE_NODE_ID = POD_INDEX + 1`) from the
-  StatefulSet pod-index label.
+### Pod identity details
 
-`auto-provision = false` in the config TOML (the restate-server default is
-`true`) means fresh nodes come up, form the metadata cluster, and wait.
+The StatefulSet template cannot express a different static peer list or node ID
+for each ordinal. The container startup command builds:
 
-**The operator provisions.** With `spec.cluster.autoProvision: true`, the
-operator waits for the `restate-0` pod to be Running (pods only turn Ready
-after provisioning, so it deliberately doesn't wait for Ready), then calls
-the ProvisionCluster gRPC API on it through the headless service with no
-explicit parameters — the contacted node's configured defaults apply
-(`default-num-partitions = 48`, `default-replication = { node = 2 }` from the
-TOML). "Already provisioned" counts as success, and the outcome is cached in
-the CR's `status.provisioned`, so the call runs at most once per cluster.
+- `RESTATE_METADATA_CLIENT__ADDRESSES` from the three stable
+  `restate-<ordinal>.restate-cluster.restate.svc.cluster.local:5122` names;
+- `RESTATE_FORCE_NODE_ID` from the StatefulSet pod-index label.
 
-The operator *requires* server self-provisioning to be off: it fails
-validation unless the config TOML has `auto-provision = false` (or the env
-sets `RESTATE_AUTO_PROVISION=false`). No node can ever race the operator to
-initialize cluster state.
+The operator injects `POD_NAME` and a default advertised address. The manifest
+adds `POD_NAMESPACE` and `POD_INDEX`, then overrides
+`RESTATE_ADVERTISED_ADDRESS` with the fully qualified StatefulSet DNS form.
+Kubernetes `$(VAR)` expansion in environment values is order-sensitive, so
+`POD_NAMESPACE` must appear before values that reference it. Environment
+entries supplied in `spec.compute.env` override operator defaults with the
+same name.
 
-Manual fallback: `restatectl provision` against any node does the same thing
-and is safe to re-run (an already-provisioned cluster is reported, never
-re-initialized).
+## Storage and snapshots
 
-Restate Cloud's script instead lets only pod 0 auto-provision on first boot;
-operator-managed provisioning was chosen here so bootstrap is driven by the
-operator rather than by pod startup code.
+Each Restate pod receives a 1 TiB PVC using the repository-owned
+`restate-gp3` StorageClass:
 
-## Cross-namespace networking
+- EBS CSI provisioner;
+- encrypted XFS;
+- 6000 IOPS and 500 MiB/s;
+- `WaitForFirstConsumer`, so the volume is provisioned in the pod's zone;
+- `Retain`, so deleting the PVC does not delete the EBS PV.
 
-The operator denies all traffic to/from the `restate` namespace by default,
-then opens: node↔node (5122), operator→admin (needed for RestateDeployment
-registration), DNS, and public-internet egress (private ranges
-10/8, 172.16/12, 192.168/16, 169.254/16 excluded — which is why IRSA/STS works
-without extra rules).
+`Retain` is a safety net, not an automatic restore process. A Released PV keeps
+its former claim reference and must be handled explicitly during recovery.
 
-Three directions to reason about:
+Partition snapshots are written to:
 
-- **Cluster → services (outbound invocation)**: automatic. The operator stamps
-  every RestateDeployment pod with the label
-  `allow.restate.dev/<cluster-name>: "true"` (here:
-  `allow.restate.dev/restate`), and the cluster's egress policy matches that
-  label **in any namespace**. Nothing to configure.
-- **Services → cluster (inbound)**: NOT automatic.
-  `security.networkPeers.ingress` in `04-restate-cluster.yaml` allowlists the
-  `restate-apps` namespace for **8080 only**. The admin API (9070) is
-  deliberately not opened to workloads — it has no authentication and grants
-  full cluster control, so exposure is limited to the operator's own built-in
-  carve-out (`allowOperatorAccessToAdmin`, default true) and humans via
-  `kubectl port-forward`/`exec`, which tunnel through the kubelet and bypass
-  NetworkPolicy. (Restate Cloud does the same: its admin peers are only its
-  own authenticating gateway.)
-- **Everything else → services**: denied. `00-namespaces.yaml` adds a
-  NetworkPolicy on `restate-apps` admitting ingress only from the `restate`
-  namespace (invoker calls and registration-time discovery), so arbitrary
-  in-cluster workloads can't hit SDK endpoints on 9080 directly and bypass
-  Restate.
+```text
+s3://<dedicated-bucket>/restate/snapshots/
+```
 
-All of this only takes effect if the CNI enforces NetworkPolicy
-(see [prerequisites](01-prerequisites.md)).
-
-One AWS-specific egress gotcha: the default egress rule allows **public IPs
-only**. S3 through a *Gateway* VPC endpoint keeps working (it's routing-level;
-the destination IPs stay public), but *Interface* endpoints (STS, Secrets
-Manager, …) resolve to private in-VPC IPs that the deny-all egress blocks. If
-your VPC has such endpoints, allowlist their IPs on the RestateCluster with
-`networkEgressRules` — otherwise IRSA's STS calls silently start hitting a
-blackholed endpoint. (Restate Cloud maintains exactly such an allowlist for
-its STS interface endpoint.)
-
-## RestateDeployment mechanics
-
-`resources/05-restate-compute.yaml`. A Deployment-alike with Restate-aware
-rollout semantics: each revision gets its **own ReplicaSet + Service**, is
-**registered** with the cluster's admin API by the operator, and old
-revisions **drain** — scaled down only once Restate reports nothing pinned
-to them. The container port **must be named `restate`** — the operator
-builds the registration URL from it. Full lifecycle (versioning, draining,
-rollback, knobs): [deploying services](03-deploying-services.md).
+The prefix is the same in every installation because the namespace is
+`restate`. A snapshot repository belongs to exactly one Restate cluster, so the
+bucket must be dedicated to this deployment unless the prefix is deliberately
+made cluster-specific in both IAM and Restate configuration.
 
 ## IAM for snapshots
 
-Default here: **IRSA**. The operator creates ServiceAccount `restate`;
-`security.serviceAccountAnnotations` adds `eks.amazonaws.com/role-arn`, and the
-role's trust policy (created in [runbook step 2](02-runbook.md)) allows that SA.
-STS endpoints are public IPs, allowed by the default egress policy.
+The default credential path is IRSA:
 
-Alternative (what Restate Cloud itself runs): **operator-managed EKS Pod
-Identity**. Requires the [ACK EKS controller](https://github.com/aws-controllers-k8s/eks-controller)
-in the cluster plus the operator helm value `awsPodIdentityAssociationCluster`
-(commented in `resources/02-restate-operator.values.yaml`); then replace the
-annotation with `security.awsPodIdentityAssociationRoleArn`. That field is also
-what opens NetworkPolicy egress to the pod-identity agent at
-`169.254.170.23:80` — IRSA doesn't need it.
+1. the EKS cluster's IAM OIDC provider establishes the issuer;
+2. a cluster-qualified IAM role trusts only
+   `system:serviceaccount:restate:restate`;
+3. the role receives the least-privilege S3 policy from
+   `resources/01-restate-snapshots-iam-policy.json`;
+4. the operator-created ServiceAccount receives the role ARN annotation;
+5. the AWS SDK in Restate exchanges its projected token through STS.
+
+The alternative is operator-managed EKS Pod Identity, matching Restate Cloud.
+It requires the
+[ACK EKS controller](https://github.com/aws-controllers-k8s/eks-controller),
+the operator Helm value `awsPodIdentityAssociationCluster`, and
+`security.awsPodIdentityAssociationRoleArn`. That field also causes the
+operator to allow egress to the pod-identity agent at `169.254.170.23:80`.
+
+## SDK service revision lifecycle
+
+A `RestateDeployment` is not a thin wrapper around a Kubernetes Deployment.
+For every distinct pod template, the operator creates a versioned ReplicaSet
+and Service, registers that endpoint with Restate, and keeps the old revision
+alive while any invocation remains pinned to it.
+
+This is why the container port must be named `restate`, and why old ReplicaSets
+must not be deleted as ordinary rollout debris. The complete update, drain, and
+rollback workflow is in [Deploying services](03-deploying-services.md).
+
+## Invariants to preserve
+
+When changing the manifests, preserve these relationships or update every
+consumer together:
+
+- `RestateCluster` name, generated namespace, service DNS, network-peer labels,
+  and IAM subject all assume the name `restate`.
+- The replica count, `REPLICAS` environment value, generated peer list, and
+  scheduling capacity must agree.
+- The IAM policy bucket and snapshot destination bucket must be identical.
+- The StorageClass name in `resources/03-gp3-storageclass.yaml` and
+  `spec.storage.storageClassName` must match.
+- Port 9070 must not be exposed without an authentication boundary.
+- Experimental runtime settings are pinned to Restate `1.7.7` and must be
+  revalidated during an upgrade.
+
+The rationale for values copied or adapted from Restate Cloud is recorded in
+[Profile fidelity](04-profile-fidelity.md).

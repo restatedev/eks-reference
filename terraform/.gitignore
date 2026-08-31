@@ -6,6 +6,7 @@
 *.tfstate.*
 terraform.tfvars
 crash.log
+*.tfplan
 
 # Deliberately NOT committed, against the usual advice: lock files record
 # provider hashes per toolchain, and Terraform and OpenTofu resolve different
