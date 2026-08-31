@@ -27,12 +27,26 @@ What must exist before running the [runbook](01-runbook.md).
 
 ## Toolchain
 
-`shell.nix` provides `aws`, `eksctl`, `kubectl`, `helm`, `jq` — enter with
-`nix-shell`.
+- `aws` — AWS CLI v2 (auth, IAM, S3; kubeconfig uses `aws eks get-token` as an
+  exec plugin, no separate authenticator binary needed)
+- `eksctl` — OIDC provider / IRSA role plumbing
+- `kubectl`
+- `helm` — installs the operator chart
+- `jq`
+- `restatectl` — cluster administration (provision, status). Ships inside the
+  restate image, so the runbook runs it via `kubectl exec` and no local
+  install is required; for a local copy:
 
-The `restate` CLI is *not* in the shell (the nixpkgs build fails locally).
-When you want it: `npm install -g @restatedev/restate`. Everything in the
-runbook works without it by curling the admin API (port 9070) directly.
+  ```bash
+  npm install -g @restatedev/restatectl
+  ```
+
+- `restate` (optional) — the service-level CLI. Every runbook step works
+  without it by curling the admin API (port 9070) directly; install it with:
+
+  ```bash
+  npm install -g @restatedev/restate
+  ```
 
 ## Placeholders
 

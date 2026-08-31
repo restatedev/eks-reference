@@ -33,6 +33,13 @@ Grep for **`REPLACE_ME`** under `resources/` before applying: snapshots bucket
 
 ## Toolchain
 
-`shell.nix` — `aws`, `eksctl`, `kubectl`, `helm`, `jq`; enter with `nix-shell`.
-(The `restate` CLI isn't in the shell — the nixpkgs build fails locally; get it
-with `npm install -g @restatedev/restate`, or curl the admin API directly.)
+- `aws` — AWS CLI v2 (auth, IAM, S3; kubeconfig uses `aws eks get-token`)
+- `eksctl` — OIDC provider / IRSA role plumbing
+- `kubectl`
+- `helm` — installs the operator chart
+- `jq`
+- `restatectl` — cluster administration (provision, status). Ships inside the
+  restate image, so the runbook runs it via `kubectl exec`; for a local copy:
+  `npm install -g @restatedev/restatectl`
+- `restate` (optional) — service-level CLI; the runbook curls the admin API
+  instead. Install: `npm install -g @restatedev/restate`
