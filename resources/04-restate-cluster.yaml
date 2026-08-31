@@ -42,11 +42,19 @@ spec:
       limits:
         memory: 50Gi
 
-    # Replicated-metadata bootstrap, verbatim from Restate Cloud's startup.sh.
-    # Builds the metadata-client address list from REPLICAS, derives a stable
-    # node id from the pod index, and lets ONLY pod 0 auto-provision the
-    # cluster (pods 1..N join). POD_NAME is injected by the operator via the
-    # downward API; user env below overrides operator defaults by name.
+    # Replicated-metadata bootstrap, adapted from Restate Cloud's startup.sh.
+    # Builds the metadata-client address list from REPLICAS and derives a
+    # stable node id from the pod index — per-pod values a StatefulSet's
+    # single pod template can't express as plain env. POD_NAME is injected by
+    # the operator via the downward API; user env below overrides operator
+    # defaults by name.
+    #
+    # Deviation from the cloud script: no auto-provision. Cloud lets pod 0
+    # auto-provision on first boot; here `auto-provision = false` in the
+    # config TOML below means fresh pods start, form the metadata cluster,
+    # and WAIT — provisioning is an explicit one-time `restatectl provision`
+    # (runbook step 4). Two-step on purpose: day-0 bootstrap is an auditable
+    # action, and no pod ever races to initialize cluster state.
     command: ["/bin/sh", "-c"]
     args:
       - |
@@ -59,12 +67,6 @@ spec:
 
         export RESTATE_METADATA_CLIENT__ADDRESSES="[$addresses]"
         export RESTATE_FORCE_NODE_ID=$(expr ${POD_INDEX} + 1)
-
-        if [ "${POD_INDEX}" -eq 0 ]; then
-          export RESTATE_AUTO_PROVISION=true
-        else
-          export RESTATE_AUTO_PROVISION=false
-        fi
 
         exec restate-server
 
@@ -203,7 +205,9 @@ spec:
 
   # Server config. The cloud profile sets default-num-partitions (48) and
   # default-replication ({node: 2} for 3 replicas) via env vars; folded into
-  # the TOML here for readability — same effective config.
+  # the TOML here for readability — same effective config. These defaults are
+  # also what `restatectl provision` (run without flags) adopts at
+  # provisioning time.
   config: |
     roles = [
         "worker",
@@ -213,6 +217,10 @@ spec:
         "http-ingress",
     ]
     bind-address = "0.0.0.0:5122"
+    # Two-step bootstrap: nodes start unprovisioned and wait; provision once
+    # with `restatectl provision` (runbook step 4). restate-server defaults
+    # this to true, so it must stay explicit.
+    auto-provision = false
     default-num-partitions = 48
     default-replication = { node = 2 }
 

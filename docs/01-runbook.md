@@ -72,12 +72,23 @@ no cert-manager.
 kubectl apply -f resources/03-gp3-storageclass.yaml
 kubectl apply -f resources/04-restate-cluster.yaml
 
-kubectl -n restate get pods -w          # restate-0..2 -> Running/Ready
+kubectl -n restate get pods -w          # restate-0..2 -> Running
+```
+
+The pods come up **unprovisioned** and wait (`auto-provision = false` in the
+config TOML). Provision once, against any single node — `restatectl` ships in
+the restate image:
+
+```bash
+kubectl -n restate exec restate-0 -- restatectl provision --yes
 kubectl -n restate exec restate-0 -- restatectl status   # nodes, logs, partitions
 ```
 
-Pod 0 auto-provisions the cluster on first boot (48 partitions, `{node: 2}`
-replication); pods 1–2 join via the replicated metadata store.
+Run without flags, `provision` adopts the contacted node's configured
+defaults — 48 partitions, `{node: 2}` replication from the config TOML. Drop
+`--yes` (and add `-it` to the exec) to review the dry-run configuration
+interactively before confirming. Re-running is safe: an already-provisioned
+cluster is reported, not re-initialized.
 
 ## 5. Compute — `resources/05-restate-compute.yaml`
 

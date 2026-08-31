@@ -33,19 +33,34 @@ ServiceAccount, and the NetworkPolicies. Two behaviors the manifest depends on:
 
 ## Replicated-metadata bootstrap
 
-The container command in `04-restate-cluster.yaml` is Restate Cloud's
-`startup.sh` verbatim. It exists because a replicated metadata cluster has a
-chicken-and-egg problem — someone must provision, everyone must agree on
-addresses and node ids:
+A replicated metadata cluster has a chicken-and-egg problem: everyone must
+agree on addresses and node ids, and someone must provision — exactly once.
+This deployment splits that into two explicit steps.
 
-- builds `RESTATE_METADATA_CLIENT__ADDRESSES` from `REPLICAS` (all three pods'
+**Step 1 — pods start and wait.** The container command in
+`04-restate-cluster.yaml` (adapted from Restate Cloud's `startup.sh`) computes
+the per-pod values a StatefulSet's single pod template can't express as plain
+env:
+
+- `RESTATE_METADATA_CLIENT__ADDRESSES` built from `REPLICAS` (all three pods'
   stable DNS names),
-- derives a stable node id (`RESTATE_FORCE_NODE_ID = POD_INDEX + 1`) from the
-  StatefulSet pod index label,
-- sets `RESTATE_AUTO_PROVISION=true` **only on pod 0**; pods 1–2 join.
+- a stable node id (`RESTATE_FORCE_NODE_ID = POD_INDEX + 1`) from the
+  StatefulSet pod-index label.
 
-This replaces the operator's own `spec.cluster.autoProvision` knob — the
-script is the battle-tested path Restate Cloud runs in production.
+`auto-provision = false` in the config TOML (the restate-server default is
+`true`) means fresh nodes come up, form the metadata cluster, and wait.
+
+**Step 2 — explicit provisioning.** `restatectl provision` against any single
+node ([runbook step 4](01-runbook.md)). Run without flags it adopts the
+contacted node's configured defaults (`default-num-partitions = 48`,
+`default-replication = { node = 2 }` from the TOML), prints the resulting
+configuration as a dry run, and provisions on confirmation (`--yes` skips the
+prompt). A second provision is rejected as already-provisioned, never
+re-initialized.
+
+Restate Cloud's script instead lets only pod 0 auto-provision on first boot.
+The two-step flow is a deliberate deviation: day-0 bootstrap becomes an
+auditable action, and no pod ever races to initialize cluster state.
 
 ## Cross-namespace networking
 

@@ -18,8 +18,6 @@ read it before "fixing" anything in the cluster manifest that looks unusual.
   (100k records / 5m / 2 retained). Memory budget inside the 50 Gi limit:
   10 GiB rocksdb + 3 GiB bifrost cache + 6 GiB invoker + 4 GiB query engine =
   23 GiB accounted, rest is unaccounted-overhead headroom.
-- **Startup script**: verbatim from Restate Cloud's `startup.sh`
-  (see [architecture](02-architecture.md#replicated-metadata-bootstrap)).
 - **Scheduling**: required hostname anti-affinity + preferred zone spread; the
   `cloud.restate.dev/interruptible` toleration (inert unless you taint nodes
   with it).
@@ -41,6 +39,11 @@ read it before "fixing" anything in the cluster manifest that looks unusual.
 
 ## Adapted
 
+- Bootstrap: cloud's `startup.sh` lets pod 0 auto-provision on first boot;
+  here the startup script keeps only the address-list / node-id derivation
+  and provisioning is an explicit one-time `restatectl provision`
+  (`auto-provision = false` in the TOML) — see
+  [architecture](02-architecture.md#replicated-metadata-bootstrap).
 - IAM: cloud uses operator-managed EKS Pod Identity (needs the ACK EKS
   controller); this repo defaults to IRSA, with the Pod Identity path
   documented as the alternative.
