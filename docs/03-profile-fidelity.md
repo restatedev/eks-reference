@@ -7,7 +7,7 @@ read it before "fixing" anything in the cluster manifest that looks unusual.
 
 ## Kept 1:1
 
-- **Image pin** `docker.restate.dev/restatedev/restate:1.7.4` — the profile's
+- **Image pin** `docker.restate.dev/restatedev/restate:1.7.7` — the profile's
   `restateImageOverride`. The `RESTATE_EXPERIMENTAL_*` flags are validated
   against exactly this version; revisit them on any upgrade.
 - **Sizing**: 3 replicas × requests 24 CPU / 50 Gi. Limits are **memory-only on

@@ -43,8 +43,8 @@ spec:
 
   compute:
     # Profile pins this exact image (restateImageOverride). Same artifact is on
-    # ghcr.io/restatedev/restate:1.7.4 and docker.io/restatedev/restate:1.7.4.
-    image: docker.restate.dev/restatedev/restate:1.7.4
+    # ghcr.io/restatedev/restate:1.7.7 and docker.io/restatedev/restate:1.7.7.
+    image: docker.restate.dev/restatedev/restate:1.7.7
     replicas: 3
     resources:
       requests:
@@ -167,7 +167,7 @@ spec:
       - name: RESTATE_ADMIN__QUERY_ENGINE__DATAFUSION_OPTIONS
         value: '{ "datafusion.execution.batch_size" = "256" }'
 
-      # ---- experimental flags: the profile pins image 1.7.4, these flags are
+      # ---- experimental flags: the profile pins image 1.7.7, these flags are
       # ---- validated against exactly that version — revisit on any upgrade ----
       - name: RESTATE_EXPERIMENTAL_ENABLE_PROTOCOL_V7
         value: "true"
