@@ -183,6 +183,28 @@ kubectl auth can-i create networkpolicies.networking.k8s.io --all-namespaces
 All three authorization checks should return `yes` for the manual path. The
 Terraform path uses `aws eks get-token` directly, but needs equivalent access.
 
+## OCI chart registry access
+
+The Restate operator chart is an OCI artifact published in GitHub Container
+Registry (GHCR). The source repository and release notes are public, but GHCR
+may require authentication for chart pulls depending on the client and
+registry policy. If Helm reports `401` or `403` while fetching
+`restate-operator-helm`, authenticate before installing the operator or running
+the Terraform/OpenTofu plan:
+
+```bash
+export GHCR_USERNAME=...       # GitHub username
+export GHCR_TOKEN=...          # token with read:packages; do not commit it
+printf '%s' "$GHCR_TOKEN" | helm registry login ghcr.io \
+  --username "$GHCR_USERNAME" --password-stdin
+```
+
+Run the login in the same shell as Terraform/OpenTofu. If you use a temporary
+Helm registry configuration, set `HELM_REGISTRY_CONFIG` before both the login
+and the plan/apply so the Helm provider can reuse the credentials. A GitHub
+token supplied by `gh auth token` is also suitable when it has the
+`read:packages` scope.
+
 ## Tooling
 
 Choose one path; you do not need every tool in both columns.
@@ -192,11 +214,15 @@ Choose one path; you do not need every tool in both columns.
 | AWS CLI v2 | ✓ | ✓ | Identity, EKS lookup, IAM, S3, exec auth |
 | `kubectl` | ✓ | recommended | Apply and diagnose Kubernetes resources |
 | `eksctl` | ✓ | — | OIDC provider and IRSA role plumbing |
-| Helm | ✓ | — | Install the Restate operator |
+| Helm | ✓ | ✓* | Install the operator manually; authenticate the OCI chart when Terraform invokes Helm |
 | Terraform ≥1.5 or OpenTofu | — | ✓ | Apply the two Terraform stages |
 | `jq` | ✓ | recommended | Format API responses |
 | `restatectl` | via pod | via pod | Cluster status, provisioning, snapshots |
 | `restate` CLI | optional | optional | Service/deployment administration |
+
+`*` The Terraform Helm provider installs the release itself; the Helm CLI is
+listed for the `helm registry login` step when GHCR does not allow anonymous
+OCI pulls.
 
 An optional Nix development shell is provided:
 

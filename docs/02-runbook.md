@@ -152,6 +152,22 @@ For the EKS Pod Identity alternative, see
 `resources/02-restate-operator.values.yaml` is a Helm values file, not a
 Kubernetes manifest:
 
+If the GHCR registry requires authentication in your environment, log in
+before running this command. Use a GitHub token with the `read:packages` scope
+and keep it out of source control:
+
+```bash
+export GHCR_USERNAME=...
+export GHCR_TOKEN=...
+printf '%s' "$GHCR_TOKEN" | helm registry login ghcr.io \
+  --username "$GHCR_USERNAME" --password-stdin
+```
+
+The same registry login is needed before a Terraform/OpenTofu stage-01 plan,
+because the Helm provider fetches this OCI chart during planning. If Helm
+reports `401` or `403`, repeat the login and verify that the token can read
+GitHub packages.
+
 ```bash
 helm upgrade --install restate-operator \
   oci://ghcr.io/restatedev/restate-operator-helm \
@@ -170,6 +186,17 @@ kubectl get crd restateclusters.restate.dev restatedeployments.restate.dev
 ```
 
 The v3 chart installs and upgrades its CRDs. It does not require cert-manager.
+
+### If the chart pull fails with 401 or 403
+
+These responses mean that GHCR rejected the chart request. The source
+repository and release may be public while the OCI package still requires
+authentication for your client or registry policy. Repeat the login above with
+a GitHub token that has the `read:packages` scope and make sure the registry
+configuration is visible to the Helm or Terraform/OpenTofu process. If you
+intentionally need to test anonymous access, clear any stale GHCR credential
+with `helm registry logout ghcr.io` and retry; an anonymous 401/403 is still a
+registry-access prerequisite failure, not a Kubernetes or AWS failure.
 
 ## Step 4: Create storage and the Restate cluster
 

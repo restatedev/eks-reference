@@ -106,6 +106,27 @@ create_oidc_provider = true
 Only enable creation after confirming the provider is absent. IAM refuses a
 second provider for the same issuer.
 
+## Authenticate the operator chart when required
+
+Stage 01 fetches the operator as the OCI chart
+`oci://ghcr.io/restatedev/restate-operator-helm:3.0.1`. Some GHCR clients are
+denied anonymous chart pulls even though the operator source repository and
+release are public. If `tofu plan` or `terraform plan` reports a `401` or `403`
+while locating this chart, log in first with a GitHub token that has the
+`read:packages` scope:
+
+```bash
+export GHCR_USERNAME=...
+export GHCR_TOKEN=...
+printf '%s' "$GHCR_TOKEN" | helm registry login ghcr.io \
+  --username "$GHCR_USERNAME" --password-stdin
+```
+
+Keep the login and Terraform/OpenTofu commands in the same shell. If you use a
+temporary Helm registry configuration, export `HELM_REGISTRY_CONFIG` before
+both commands so the Helm provider can reuse the credentials. A token from
+`gh auth token` works when its scopes include `read:packages`.
+
 ## Quick start
 
 From the repository root:
@@ -273,8 +294,10 @@ the Restate cluster, PVs, snapshot bucket, or cluster OIDC provider.
 
 | Symptom | Likely cause |
 |---|---|
+| Helm reports `403 denied` pulling the operator chart | GHCR rejected the OCI request; authenticate with a GitHub token carrying `read:packages` and ensure the registry configuration is visible to Terraform/OpenTofu (see [Runbook: if the chart pull fails](../docs/02-runbook.md#if-the-chart-pull-fails-with-401-or-403)) |
 | OIDC data lookup fails | Cluster has no IAM OIDC provider; create it or set `create_oidc_provider=true` |
 | OIDC create reports `EntityAlreadyExists` | Provider already exists; keep the default lookup mode |
+| Helm reports `Error locating chart` with HTTP 401/403 | Authenticate to GHCR with a GitHub token carrying `read:packages`; ensure the same `HELM_REGISTRY_CONFIG` is visible to Terraform/OpenTofu |
 | Kubernetes provider is unauthorized | AWS identity lacks EKS access entry/`aws-auth` mapping or Kubernetes RBAC |
 | Stage 02 cannot resolve Restate kinds | Stage 01 did not install the operator CRDs in this cluster |
 | Snapshot role lookup fails | Stage 01 was not applied with the same `cluster_name` |
