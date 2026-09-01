@@ -245,6 +245,14 @@ spec:
       # cluster instead.
       - name: RESTATE_WORKER__SNAPSHOTS__DESTINATION
         value: s3://REPLACE_ME_SNAPSHOTS_BUCKET/$(POD_NAMESPACE)/snapshots
+      # PER PARTITION, not cluster-wide: a leader partition snapshots when its
+      # applied LSN reaches its last snapshot's LSN + this value, and only if
+      # that snapshot is older than SNAPSHOT_INTERVAL below (the interval is a
+      # floor on frequency, not a trigger). With 48 partitions, evenly spread
+      # traffic can produce a large aggregate record count while no single
+      # partition approaches 100k — measured here: 15,300 invocations gave
+      # ~182k records in aggregate but ~6.3k on the busiest partition, and no
+      # snapshot. See docs/05-operations.md#when-automatic-snapshots-fire.
       - name: RESTATE_WORKER__SNAPSHOTS__SNAPSHOT_INTERVAL_NUM_RECORDS
         value: "100000"
       - name: RESTATE_WORKER__SNAPSHOTS__SNAPSHOT_INTERVAL

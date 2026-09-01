@@ -157,7 +157,9 @@ pointing somewhere your users cannot reach.
 ## Verify the snapshot path
 
 Automatic snapshots require both the configured record threshold and interval,
-so they are a poor first-install signal. Trigger one explicitly:
+so they are a poor first-install signal — see [when automatic snapshots
+fire](#when-automatic-snapshots-fire) for why they can be rarer than the
+5-minute interval suggests. Trigger one explicitly:
 
 ```bash
 kubectl -n restate exec restate-0 -- \
@@ -186,6 +188,38 @@ Confirm that:
 - the attached IAM policy grants access to this exact bucket;
 - a private STS interface endpoint is not being blocked by Restate's egress
   NetworkPolicy. See [Architecture](00-architecture.md#private-aws-endpoints).
+
+### When automatic snapshots fire
+
+The manifest sets `SNAPSHOT_INTERVAL_NUM_RECORDS` to 100,000 and
+`SNAPSHOT_INTERVAL` to five minutes. Both conditions must hold, and the record
+threshold is **per partition**, not cluster-wide: each leader partition
+snapshots when its applied LSN reaches its last snapshot's LSN plus the
+threshold, and only if the previous snapshot is older than the interval. The
+interval is a floor on frequency, not a trigger.
+
+With 48 partitions, that is easy to misjudge. A measured example on this
+reference: 15,300 invocations spread evenly produced roughly 182,000 applied
+records in aggregate but a maximum of about 6,300 on any single partition — six
+per cent of one partition's threshold — and no automatic snapshot, correctly.
+Aggregate throughput tells you nothing here; the busiest single partition is
+what matters.
+
+The consequence is operational, not cosmetic. A cluster with modest or evenly
+spread traffic may go a long time between automatic snapshots, and
+`resources/04-restate-cluster.yaml` relies on snapshots so that replacement pods
+bootstrap from S3 instead of replaying a full log. If you depend on that — node
+replacement time, or log growth — then either schedule manual snapshots or lower
+`RESTATE_WORKER__SNAPSHOTS__SNAPSHOT_INTERVAL_NUM_RECORDS`. The 100,000 comes
+from the profile and is left at its profile value here; see
+[Profile fidelity](04-profile-fidelity.md).
+
+Check where partitions actually stand before concluding anything is broken:
+
+```bash
+kubectl -n restate exec restate-0 -- restatectl status
+aws s3 ls "s3://$BUCKET/restate/snapshots/" --recursive | wc -l
+```
 
 ## Verify the network boundary
 
