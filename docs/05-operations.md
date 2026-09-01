@@ -11,6 +11,12 @@ For installation, use the [manual runbook](02-runbook.md) or the
 [Terraform guide](../terraform/README.md). For SDK service rollout behavior,
 use [Deploying services](03-deploying-services.md).
 
+For an installation handoff, run the [five-minute health
+check](#five-minute-health-check), [verify the snapshot
+path](#verify-the-snapshot-path), and confirm the [network
+boundary](#verify-the-network-boundary). The remaining sections are day-two
+reference material and can be read when needed.
+
 ## What healthy looks like
 
 | Layer | Healthy state |

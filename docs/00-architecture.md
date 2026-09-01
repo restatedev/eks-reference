@@ -4,6 +4,10 @@ This document explains what the deployment creates, which component owns each
 resource, how traffic is allowed, and how a fresh three-node Restate cluster
 becomes usable.
 
+You do not need to read this document end to end to perform a standard
+installation. Use it when reviewing security and ownership, diagnosing a
+cross-component problem, or changing the supplied defaults.
+
 The operator behavior described here was verified against the
 [Restate operator](https://github.com/restatedev/restate-operator) at Helm chart
 version `3.0.1`.

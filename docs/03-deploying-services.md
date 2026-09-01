@@ -4,6 +4,12 @@ Restate invokes application code through SDK service endpoints. In this
 reference deployment those services run in namespace `restate-apps` as
 `RestateDeployment` custom resources rather than plain Kubernetes Deployments.
 
+This guide is an application/platform-team handoff. If your responsibility is
+only to install the Restate cluster, stop after the installation completion
+checklist and give this document to the team that owns the application image,
+configuration, scaling, and rollout. Do not apply the example while its image
+placeholder is still present.
+
 Start from `resources/05-restate-compute.yaml`, but treat it as a lifecycle
 example—not a complete production application template.
 

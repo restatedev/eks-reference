@@ -1,10 +1,26 @@
 # Restate on EKS: replicated reference deployment
 
-This repository is a production-shaped reference for running a **three-node,
-replicated Restate cluster** on an existing Amazon EKS cluster with the
-[Restate operator](https://github.com/restatedev/restate-operator). It also
-shows how to run Restate SDK services in a separate Kubernetes namespace and
-let the operator register, version, and drain them safely.
+This repository is an installation reference for a cloud or platform engineer
+who has been asked to deploy Restate into an existing Amazon EKS cluster. It
+assumes working knowledge of AWS, EKS, IAM, Kubernetes, and either Terraform or
+the AWS/Kubernetes command-line tools. It does not assume prior Restate
+operational experience.
+
+[Restate](https://docs.restate.dev/foundations/key-concepts) is a durable
+execution runtime. It sits in front of application services, records invocation
+progress, and lets work resume after failures without repeating completed
+steps. This repository installs the runtime as a **three-node replicated
+cluster** and installs the Kubernetes
+[Restate operator](https://github.com/restatedev/restate-operator) that manages
+it.
+
+Keep these three layers separate while reading the guide:
+
+| Term | Meaning in this repository |
+|---|---|
+| EKS cluster | Existing AWS/Kubernetes infrastructure; never created here |
+| Restate cluster | Three stateful Restate server pods installed into EKS |
+| SDK service | Customer application code that uses a Restate SDK; deployed separately |
 
 The sizing and runtime tuning come from Restate Cloud's
 `3-node.xlarge-vqueues` profile:
@@ -26,20 +42,28 @@ The sizing and runtime tuning come from Restate Cloud's
 
 ## What you get
 
-- Operator-managed bootstrap of a replicated Restate cluster.
+- A Kubernetes operator that creates, initializes, and monitors the replicated
+  Restate cluster.
 - Persistent EBS storage with `Retain` reclamation to reduce accidental data
   loss during cluster deletion.
-- Partition snapshots in a dedicated S3 bucket through IRSA.
+- Partition snapshots in a dedicated S3 bucket through IAM Roles for Service
+  Accounts (IRSA).
 - Default-deny networking around Restate, plus isolation for SDK services.
-- A `RestateDeployment` example with immutable revisions, automatic
-  registration, graceful draining, and rollback support.
+- An optional `RestateDeployment` example showing how an application team can
+  roll out and drain SDK service revisions safely.
 - Two deployment paths that consume the same manifests:
   - a transparent, command-by-command `kubectl`/Helm runbook;
   - a two-stage Terraform or OpenTofu workflow.
 
+Completing either deployment path gives you a healthy Restate cluster, its
+operator, persistent storage, and snapshot access. It does **not** deploy a
+customer application or expose a public endpoint. Those are separate handoffs
+to the application and networking owners.
+
 ## Before you deploy
 
-Read these constraints first; they are not optional sizing trivia.
+Treat these as deployment stop conditions. The prerequisite guide provides the
+commands that verify each one.
 
 1. **Capacity:** you need at least three eligible nodes, each with 24 vCPU and
    50 GiB memory still available for new pod requests after existing system and
@@ -65,8 +89,8 @@ The complete checklist and verification commands are in
 
 | Path | Best for | Entry point |
 |---|---|---|
-| AWS CLI + eksctl + Helm + kubectl (**default**) | Understanding every component, one-off installs, or integrating the manifests into another delivery system | [Manual runbook](docs/02-runbook.md) |
-| Terraform / OpenTofu | Repeatable environments with managed state and reviewable plans | [Terraform guide](terraform/README.md) |
+| AWS CLI + eksctl + Helm + kubectl | A guided install, reviewing each component, or integrating the manifests into another delivery system | [Manual runbook](docs/02-runbook.md) |
+| Terraform / OpenTofu | State-managed environments with repeatable, reviewable plans | [Terraform guide](terraform/README.md) |
 
 Do not mix the paths in the same installation without importing the existing
 AWS and Kubernetes resources into Terraform state.
@@ -106,23 +130,19 @@ networking, IAM, and ownership details.
 
 ## Documentation
 
-| If you need to… | Read |
-|---|---|
-| Understand the topology and security boundaries | [Architecture](docs/00-architecture.md) |
-| Check capacity, AWS, access, and tooling | [Prerequisites](docs/01-prerequisites.md) |
-| Install with CLI tools | [Manual runbook](docs/02-runbook.md) |
-| Install with Terraform or OpenTofu | [Terraform guide](terraform/README.md) |
-| Deploy or roll back SDK services | [Deploying services](docs/03-deploying-services.md) |
-| Operate, diagnose, or remove the deployment | [Operations and troubleshooting](docs/05-operations.md) |
-| Understand deviations from Restate Cloud | [Profile fidelity](docs/04-profile-fidelity.md) |
+| Task | Read | When |
+|---|---|---|
+| Confirm the EKS cluster is suitable and your identities are authorized | [Prerequisites](docs/01-prerequisites.md) | Required before installation |
+| Install with CLI tools | [Manual runbook](docs/02-runbook.md) | Choose this or Terraform |
+| Install with Terraform or OpenTofu | [Terraform guide](terraform/README.md) | Choose this or the manual runbook |
+| Verify, operate, troubleshoot, or remove the deployment | [Operations and troubleshooting](docs/05-operations.md) | Required for handoff and day-two work |
+| Understand topology, security, and ownership | [Architecture](docs/00-architecture.md) | Reference during design or review |
+| Deploy or roll back customer SDK services | [Deploying services](docs/03-deploying-services.md) | Application/platform-team handoff |
+| Maintain the profile-derived tuning | [Profile fidelity](docs/04-profile-fidelity.md) | Maintainer reference; not needed to install |
 
-Recommended order for a first deployment:
-
-1. [Architecture](docs/00-architecture.md)
-2. [Prerequisites](docs/01-prerequisites.md)
-3. [Manual runbook](docs/02-runbook.md), or the alternative [Terraform guide](terraform/README.md)
-4. [Operations and troubleshooting](docs/05-operations.md)
-5. [Deploying services](docs/03-deploying-services.md)
+For a first installation, follow the three required tasks in order:
+prerequisites, one deployment path, then the operations handoff checks. Use the
+other guides only when their ownership or design topic applies.
 
 ## Repository layout
 

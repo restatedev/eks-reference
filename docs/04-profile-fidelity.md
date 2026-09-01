@@ -8,7 +8,7 @@ read it before "fixing" anything in the cluster manifest that looks unusual.
 This is a maintenance record, not an installation guide. The
 [Architecture](00-architecture.md) explains the resulting system; this file
 preserves the relationship to the source profile so later changes remain
-intentional.
+intentional. A customer performing a standard installation can skip it.
 
 ## Kept 1:1
 

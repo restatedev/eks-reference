@@ -1,11 +1,38 @@
 # Manual deployment runbook
 
-This runbook installs the reference stack with AWS CLI, eksctl, Helm, and
-kubectl. It favors visible, verifiable steps over automation.
+This runbook is for a cloud engineer installing Restate with AWS CLI, eksctl,
+Helm, and kubectl. It favors visible, verifiable steps over automation and does
+not require detailed knowledge of Restate internals.
+
+If Restate itself is new to you, start with the
+[top-level overview](../README.md) for the product and ownership model, then
+return here.
 
 For a state-managed installation, use the [Terraform guide](../terraform/README.md)
 instead. Do not run both paths against the same resources unless you first
 import the manual resources into Terraform state.
+
+The installation creates AWS snapshot access, cluster-scoped Kubernetes
+resources, the Restate operator, and a three-node Restate cluster. It does not
+create EKS infrastructure, expose Restate outside the cluster, or deploy a
+customer application. Step 6 is an optional application example and is not
+part of the infrastructure handoff.
+
+In this guide, `RestateCluster` is a Kubernetes custom resource describing the
+Restate runtime. It is not the EKS cluster itself. References to the EKS cluster
+are always written explicitly.
+
+## Installation flow
+
+| Step | Result | Scope |
+|---|---|---|
+| 1 | Operator and application namespaces | Kubernetes cluster |
+| 2 | Snapshot IAM policy and IRSA role | AWS account and target EKS identity provider |
+| 3 | Restate operator, CRDs, and RBAC | Kubernetes cluster |
+| 4 | StorageClass and three-node Restate cluster | Kubernetes and EBS |
+| 5 | Proven S3 snapshot path | End-to-end validation |
+| 6 | Optional SDK service example | Customer application namespace |
+| 7 | Local ingress, admin API, and UI access | Operator workstation |
 
 ## Before you begin
 
@@ -189,10 +216,9 @@ performs a cluster-wide dependency check before deleting them explicitly.
 
 ### If the chart pull fails with 401 or 403
 
-The chart is public and pulls anonymously, so the first suspect is a credential
-you already have rather than a missing one: GHCR rejects a stale or
-insufficiently scoped `ghcr.io` credential instead of falling back to anonymous
-access. Clear it and retry the pull on its own:
+The chart is public and pulls anonymously. A `401` or `403` usually means Helm
+is presenting a stale or insufficiently scoped `ghcr.io` credential instead of
+falling back to anonymous access. Clear it and retry the pull on its own:
 
 ```bash
 helm registry logout ghcr.io || true

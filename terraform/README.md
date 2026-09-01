@@ -1,8 +1,23 @@
 # Terraform and OpenTofu deployment
 
-This directory installs the reference stack on an **existing EKS cluster** in
-two ordered stages. It supports Terraform 1.5+ or OpenTofu; replace `terraform`
-with `tofu` in the examples when using OpenTofu.
+This guide is for a cloud engineer installing Restate on an **existing EKS
+cluster** with Terraform or OpenTofu. The modules create the AWS and Kubernetes
+resources needed by the Restate operator and a three-node Restate cluster; they
+do not create EKS infrastructure, public ingress, or customer applications.
+
+If Restate itself is new to you, start with the
+[top-level overview](../README.md) for the product and ownership model, then
+return here.
+
+The apply is split into two ordered stages because the operator must install
+Restate's Kubernetes resource definitions before Terraform can plan a
+`RestateCluster`. Stage 01 creates the foundation and operator. Stage 02 creates
+the three-node Restate cluster. If the prerequisites are already complete, go
+directly to [Quick start](#quick-start); the intervening sections explain the
+plan and ownership boundaries.
+
+The examples use Terraform 1.5+. OpenTofu is also supported; replace
+`terraform` with `tofu` in the commands.
 
 Before continuing, complete the repository's
 [prerequisite checklist](../docs/01-prerequisites.md#deployment-checklist). These
@@ -120,9 +135,8 @@ and pulls anonymously, so no registry credentials are needed. Note that the
 Helm provider fetches the chart during **plan**, not only during apply, so a
 registry problem surfaces before anything is created.
 
-A `401` or `403` while locating the chart is a credential problem on your side,
-most often a stale or insufficiently scoped `ghcr.io` credential that Helm
-sends on your behalf. See
+A `401` or `403` while locating the chart usually means Helm is presenting a
+stale or insufficiently scoped `ghcr.io` credential. See
 [Prerequisites: OCI chart registry access](../docs/01-prerequisites.md#oci-chart-registry-access)
 for the logout-and-retry path and, for environments that genuinely block
 anonymous pulls, the login path. If you do authenticate, keep the login and the

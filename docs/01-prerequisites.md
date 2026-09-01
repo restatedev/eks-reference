@@ -1,10 +1,21 @@
 # Prerequisites
 
-Complete this checklist before applying either deployment path. The repository
-assumes an existing EKS cluster and does not create networking, worker nodes,
-or cluster access for you.
+Use this as a go/no-go checklist before applying either deployment path. It is
+written for the engineer responsible for the EKS installation; no knowledge of
+Restate's internal storage or execution model is required.
+
+The repository assumes an existing EKS cluster and does not create networking,
+worker nodes, or cluster access. Installation is not namespace-only: depending
+on the chosen path, it creates or verifies AWS IAM and S3 resources and creates
+Kubernetes namespaces, a cluster-scoped StorageClass, CRDs, and cluster RBAC.
+The deploying identities therefore need elevated but scoped access on both
+planes; the checks below make that scope explicit. Use the same access review
+and change control you apply to other cluster add-ons.
 
 ## Deployment checklist
+
+If any required item is unknown or fails its check below, stop before applying
+resources. The runbook and Terraform guide assume this checklist has passed.
 
 - [ ] The target EKS cluster and API endpoint are reachable from the machine
       running the deployment.
