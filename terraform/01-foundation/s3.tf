@@ -4,14 +4,27 @@
 # are configured, on the expectation that Restate prunes to NUM_RETAINED in the
 # cluster manifest (2) rather than growing without bound.
 #
-# That expectation is Restate's documented behaviour and is NOT verified here.
-# A live cluster was measured at 144 objects after one snapshot round and 288
-# after two — 3 objects per partition per round across 48 partitions, which is
-# exactly the NUM_RETAINED=2 cap and therefore consistent with pruning working
-# and with nothing having been pruned yet. A third round would separate the two
-# and was not run. If an unbounded snapshot bucket would be a problem for you,
-# take three rounds and count, or add an aws_s3_bucket_lifecycle_configuration
-# and accept that it may delete objects Restate still considers live.
+# Whether pruning actually happens was NOT proven here. A live cluster measured
+# 144 objects after one snapshot round and 288 after two, and the observed key
+# layout is one directory per snapshot:
+#
+#   restate/snapshots/<partition-id>/lsn_<padded-lsn>-snap_<snapshot-id>/
+#       metadata.json
+#       <nnnnnn>.sst
+#
+# 288 = 48 partitions x 2 snapshots x 3 objects, and partition 10 was observed
+# holding exactly two snapshot directories (lsn 2 and lsn 3121). That is exactly
+# the NUM_RETAINED=2 cap, so it is equally consistent with pruning working and
+# with only two rounds having been taken. A third round would separate the two
+# and the cluster came down first.
+#
+# Do NOT reach for an age-based aws_s3_bucket_lifecycle_configuration as the
+# safety net. Snapshots are per partition, and a partition with no traffic keeps
+# its single snapshot indefinitely and legitimately — an expiration rule would
+# delete the only bootstrap material that partition has, which is worse than an
+# oversized bucket. If growth here matters to you, verify NUM_RETAINED empirically
+# on your own cluster by taking three rounds and counting, and treat the bucket as
+# Restate-managed rather than lifecycle-managed.
 #
 # The runbook path assumes a pre-created bucket; here Terraform owns it.
 # force_destroy stays at its false default on purpose: `terraform destroy`
