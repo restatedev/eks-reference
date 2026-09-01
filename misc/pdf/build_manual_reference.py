@@ -21,7 +21,7 @@ from reportlab.platypus import (
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT = "output/pdf/restate-eks-manual-deployment-reference.pdf"
-DEFAULT_SOURCE_COMMIT = "aa4c6bc710fef9c44e8dd5c64735ed728cafafaa"
+DEFAULT_SOURCE_COMMIT = "388fbec8fdb93b9e9218efaae8fc7fb63120a50b"
 DEFAULT_SOURCE_DATE = "2026-09-01"
 DEFAULT_PREPARED = "1 September 2026"
 
@@ -444,7 +444,7 @@ story.append(PageBreak())
 story.extend(
     section(
         "01 / Orientation",
-        "Know what you are installing",
+        "What this reference deploys",
         "Restate is a durable execution runtime. This reference installs the runtime and its Kubernetes operator into an existing EKS cluster; it does not create the EKS cluster or deploy a customer application.",
     )
 )
@@ -452,7 +452,7 @@ story.append(
     data_table(
         ["Layer", "What it means", "Ownership"],
         [
-            ("EKS cluster", "Existing AWS and Kubernetes infrastructure", "Customer platform team; never created by this repository"),
+            ("EKS cluster", "Existing AWS and Kubernetes infrastructure", "Customer platform team; this repository does not create it"),
             ("Restate cluster", "Three stateful Restate server pods managed by a RestateCluster custom resource", "Restate operator inside EKS"),
             ("SDK service", "Application code built with a Restate SDK and listening on port 9080", "Application team; deployed separately"),
         ],
@@ -486,8 +486,8 @@ story.append(
 story.append(Spacer(1, 9))
 story.append(
     callout(
-        "DO NOT MIX DELIVERY PATHS",
-        "This artifact covers the manual AWS CLI, eksctl, Helm, and kubectl path. Do not alternate it with Terraform against the same resources unless the manually created resources are first imported into Terraform state.",
+        "CHOOSE ONE DELIVERY PATH",
+        "This artifact covers the manual AWS CLI, eksctl, Helm, and kubectl path. Please use either the manual or Terraform path for an installation. If Terraform will take over manually created resources, import them into state before switching.",
         "amber",
     )
 )
@@ -496,14 +496,14 @@ story.append(PageBreak())
 # 2
 story.extend(
     section(
-        "02 / Go-no-go",
-        "Stop conditions before change",
-        "Treat every item below as a deployment gate. Unknown is not a pass. Record the evidence in the change ticket before the first apply.",
+        "02 / Readiness",
+        "Readiness checks before you begin",
+        "Please confirm each item below before the first apply and record the evidence in the change ticket. If an item is not yet confirmed, pause here and resolve it before continuing.",
     )
 )
 story.append(
     data_table(
-        ["Gate", "Pass condition", "Why it matters"],
+        ["Check", "Ready when", "Why it matters"],
         [
             ("Identity", "AWS account, region, EKS name, and kubectl context are confirmed", "Prevents a correct deployment to the wrong environment"),
             ("Capacity", "3 eligible nodes each have at least 24 CPU and 50 GiB remaining by requests", "Hard host anti-affinity allows one Restate pod per node"),
@@ -542,8 +542,8 @@ kubectl cluster-info
 story.append(Spacer(1, 8))
 story.append(
     callout(
-        "STOP",
-        "Stop if the account, cluster, context, region, or bucket is not the reviewed target. Stop if <b>ipFamily</b> is not <b>ipv4</b>. The reference does not support IPv6 EKS clusters.",
+        "PLEASE PAUSE AND CHECK",
+        "If the account, cluster, context, region, or bucket is not the reviewed target, please pause and correct it before continuing. This reference currently supports EKS clusters where <b>ipFamily</b> is <b>ipv4</b>.",
         "red",
     )
 )
@@ -574,7 +574,7 @@ story.append(Spacer(1, 7))
 story.append(
     callout(
         "CAPACITY RULE",
-        "Each of three different eligible nodes needs 24 CPU and 50 GiB still available after existing pod and DaemonSet requests. Do not substitute <b>kubectl top</b>; usage is not what the scheduler reserves.",
+        "Each of three different eligible nodes needs 24 CPU and 50 GiB still available after existing pod and DaemonSet requests. Please use the node's <b>Allocated resources</b> view rather than <b>kubectl top</b>, because the scheduler works from requests.",
         "amber",
     )
 )
@@ -625,9 +625,9 @@ story.append(
     data_table(
         ["Order", "Repository asset", "Action"],
         [
-            ("1", "resources/00-namespaces.yaml", "Create restate-operator and restate-apps; do not create restate"),
+            ("1", "resources/00-namespaces.yaml", "Create restate-operator and restate-apps; leave restate to the operator"),
             ("2", "resources/01-restate-snapshots-iam-policy.json", "Render a temporary policy with the dedicated bucket"),
-            ("3", "resources/02-restate-operator.values.yaml", "Pass to Helm; never apply it with kubectl"),
+            ("3", "resources/02-restate-operator.values.yaml", "Pass to Helm as values; this file is not a kubectl manifest"),
             ("4", "resources/03-gp3-storageclass.yaml", "Create encrypted gp3 with Retain and delayed binding"),
             ("5", "resources/04-restate-cluster.yaml", "Set region, bucket, and snapshot role ARN; then apply"),
             ("6", "resources/06-restate-service-cidr-egress.yaml", "Render with the real Service CIDR where policy is enforced"),
@@ -664,7 +664,7 @@ story.append(Spacer(1, 9))
 story.append(
     callout(
         "OWNERSHIP BOUNDARY",
-        "Create <b>restate-operator</b> and <b>restate-apps</b>. Do not pre-create <b>restate</b>: the operator creates and owns that namespace from RestateCluster/restate, including its StatefulSet, Services, ServiceAccount, PVCs, and policies.",
+        "Create <b>restate-operator</b> and <b>restate-apps</b>, and please leave <b>restate</b> for the operator to create and own from RestateCluster/restate. That ownership includes its StatefulSet, Services, ServiceAccount, PVCs, and policies.",
         "blue",
     )
 )
@@ -723,7 +723,7 @@ story.append(Spacer(1, 7))
 story.append(
     callout(
         "VERIFY BEFORE CONTINUING",
-        "The role trust must name <b>system:serviceaccount:restate:restate</b>. The policy and Restate snapshot destination must name the same bucket. The derived role name limits <b>CLUSTER</b> to 46 characters.",
+        "The role trust should name <b>system:serviceaccount:restate:restate</b>, and the policy and Restate snapshot destination should name the same bucket. The derived role name limits <b>CLUSTER</b> to 46 characters.",
         "green",
     )
 )
@@ -769,7 +769,7 @@ story.append(
         [
             ("Helm release", "deployed in restate-operator", "Inspect Helm status and controller events"),
             ("Controller", "Deployment Available; pod Ready", "Read controller logs before creating RestateCluster"),
-            ("CRDs", "All three definitions served", "Do not apply custom resources until schemas exist"),
+            ("CRDs", "All three definitions served", "Please wait for the schemas before applying custom resources"),
             ("Registry pull", "Public anonymous pull succeeds", "Clear stale ghcr.io credentials; authenticate only if your environment requires it"),
         ],
         [36 * mm, 61 * mm, 72 * mm],
@@ -791,7 +791,7 @@ story.append(Spacer(1, 8))
 story.append(
     callout(
         "CRD LIFECYCLE",
-        "The chart marks its CRDs to survive Helm uninstall. That is intentional. During teardown, delete them only after proving no Restate operator installation or custom resource remains anywhere in the EKS cluster.",
+        "The chart marks its CRDs to survive Helm uninstall. That is intentional. During teardown, retain them until a cluster-wide check confirms that no Restate operator installation or custom resource remains.",
         "amber",
     )
 )
@@ -848,8 +848,8 @@ kubectl -n restate exec restate-0 -- restatectl status
 story.append(Spacer(1, 8))
 story.append(
     callout(
-        "NEVER ADD A SECOND PROVISIONER",
-        "Do not run <b>restatectl provision</b> while <b>spec.cluster.autoProvision</b> is enabled. It can race the operator and split cluster initialization. If pods run but remain unready, inspect RestateCluster conditions and operator logs.",
+        "KEEP PROVISIONING OPERATOR-MANAGED",
+        "Please leave provisioning to the operator while <b>spec.cluster.autoProvision</b> is enabled. Running <b>restatectl provision</b> at the same time can race the operator and split cluster initialization. If pods run but remain unready, inspect RestateCluster conditions and operator logs.",
         "red",
     )
 )
@@ -859,7 +859,7 @@ story.append(PageBreak())
 story.extend(
     section(
         "08 / Boundaries and backup",
-        "Close the network gap and prove snapshots",
+        "Complete the network policy and verify snapshots",
         "Where EKS VPC CNI enforcement is enabled, Restate needs an additional egress rule to the cluster Service CIDR on port 9080. Then prove snapshot access end to end instead of waiting for the automatic cadence.",
     )
 )
@@ -884,7 +884,7 @@ story.append(
         ["Traffic", "Port", "Intended boundary"],
         [
             ("Client -> Restate ingress", "8080", "Expose separately only when the customer designs ingress and authentication"),
-            ("Human -> admin", "9070", "Use kubectl port-forward; never publish directly"),
+            ("Human -> admin", "9070", "Use kubectl port-forward and keep the admin endpoint private"),
             ("Restate -> Restate", "5122", "Operator-managed node and metadata traffic"),
             ("Restate -> SDK revision", "9080", "Operator labels plus Service-CIDR policy where pre-DNAT enforcement applies"),
             ("Other workloads -> SDK", "9080", "Denied by the restate-apps ingress policy where enforcement is active"),
@@ -905,7 +905,7 @@ story.append(Spacer(1, 7))
 story.append(
     callout(
         "ACCEPTANCE GATE",
-        "Do not hand over the deployment until the manual snapshot succeeds and objects appear in S3. This single test exercises the ServiceAccount annotation, OIDC trust, IAM policy, region, egress path, bucket, and Restate configuration.",
+        "Before handoff, please confirm that the manual snapshot succeeds and objects appear in S3. This single test exercises the ServiceAccount annotation, OIDC trust, IAM policy, region, egress path, bucket, and Restate configuration.",
         "green",
     )
 )
@@ -975,7 +975,7 @@ story.append(PageBreak())
 story.extend(
     section(
         "10 / Optional application step",
-        "Deploy an SDK service only when requested",
+        "Optional: add an SDK service when useful",
         "The infrastructure installation is complete without an application. If the customer also wants an SDK-service proof, use a real image and treat the operator-managed revision lifecycle as different from a normal Deployment rollout.",
     )
 )
@@ -1010,19 +1010,19 @@ story.append(
         "Normal rollout",
         "Change the pod template, review the diff, and apply. The operator creates a versioned ReplicaSet and Service, registers the new revision, and drains the old revision.",
         "Rollback",
-        "Reapply a previously known-good pod template. Do not force-delete an old ReplicaSet as ordinary rollout debris; it may still own in-flight work.",
+        "Reapply a previously known-good pod template. Please allow the old ReplicaSet to drain normally, because it may still own in-flight work.",
     )
 )
 story.append(Spacer(1, 9))
 story.append(
     callout(
         "NETWORK DIAGNOSTIC",
-        "Ready SDK pods with a RestateDeployment that never becomes Ready often indicate a missing Service-CIDR egress policy. From a Restate pod, compare access to the revision pod IP and its Service ClusterIP on port 9080.",
+        "Ready SDK pods with a RestateDeployment that remains NotReady often indicate a missing Service-CIDR egress policy. From a Restate pod, compare access to the revision pod IP and its Service ClusterIP on port 9080.",
         "amber",
     )
 )
 story.append(P("Customer-facing exposure", "H2Custom"))
-story.append(P("Do not convert the operator-managed <b>svc/restate</b> to LoadBalancer: it carries both ingress 8080 and unauthenticated admin 9070. If shared ingress is required, create a separately owned Service or Ingress for <b>8080 only</b>, prefer internal exposure, add authentication, update the allowed network peer, and set the advertised ingress address deliberately."))
+story.append(P("Keep the operator-managed <b>svc/restate</b> as a ClusterIP because it carries both ingress 8080 and unauthenticated admin 9070. If shared ingress is required, create a separately owned Service or Ingress for <b>8080 only</b>, prefer internal exposure, add authentication, update the allowed network peer, and set the advertised ingress address deliberately."))
 story.append(PageBreak())
 
 # 11
@@ -1030,7 +1030,7 @@ story.extend(
     section(
         "11 / Troubleshooting and data safety",
         "Diagnose by layer; preserve recovery options",
-        "Avoid making a second change while the first failure is still unexplained. Start with scheduling and storage, then operator reconciliation, Restate status, IAM, and network paths.",
+        "To keep troubleshooting predictable, finish investigating the current change before making another. A helpful sequence is scheduling and storage, operator reconciliation, Restate status, IAM, and then network paths.",
     )
 )
 story.append(
@@ -1038,15 +1038,15 @@ story.append(
         ["Symptom", "First evidence", "Common cause or safe action"],
         [
             ("Pod Pending", "Pod describe, events, node Allocated resources", "Capacity, anti-affinity, taint, EBS CSI, or an unavailable AZ"),
-            ("Pods Running, not Ready", "RestateCluster YAML, Restate logs, operator logs", "Provisioning, peer DNS, or config validation; do not run manual provision"),
+            ("Pods Running, not Ready", "RestateCluster YAML, Restate logs, operator logs", "Provisioning, peer DNS, or config validation; keep provisioning operator-managed"),
             ("Snapshot fails", "ServiceAccount, role trust, pod env, S3 path", "Wrong ARN, bucket, region, IAM policy, OIDC, or private endpoint blocked by egress"),
             ("SDK revision not Ready", "RestateDeployment describe, operator logs, pod IP vs ClusterIP", "Image/port issue or missing Service-CIDR egress rule"),
-            ("Admin unreachable", "Service type, port-forward output, policy state", "Use svc/restate through kubectl port-forward; do not open 9070"),
+            ("Admin unreachable", "Service type, port-forward output, policy state", "Use svc/restate through kubectl port-forward and keep 9070 private"),
         ],
         [43 * mm, 60 * mm, 66 * mm],
     )
 )
-story.append(P("Before any destructive action", "H2Custom"))
+story.append(P("Before removal or other data-affecting changes", "H2Custom"))
 story.append(
     code(
         """
@@ -1071,7 +1071,7 @@ story.append(
 story.append(P("Safe-change pattern", "H2Custom"))
 story.append(bullet("Verify cluster health and a recent snapshot before changing runtime sizing, storage, image, chart, or experimental settings."))
 story.append(bullet("Review one change at a time. Pod-template changes can roll all three stateful pods and move partition leadership."))
-story.append(bullet("Never reduce requested storage. Existing volume expansion depends on the EBS CSI driver and StorageClass."))
+story.append(bullet("Keep requested storage at its current size or increase it. Existing volume expansion depends on the EBS CSI driver and StorageClass."))
 story.append(bullet("For upgrades, validate release compatibility and every experimental/profile-derived setting; changing only the image is not a complete upgrade plan."))
 story.append(PageBreak())
 
@@ -1079,7 +1079,7 @@ story.append(PageBreak())
 story.extend(
     section(
         "12 / Teardown and source map",
-        "Remove in the reverse ownership order",
+        "A safe order for removal",
         "A manual deployment can be removed safely, but data and cluster-scoped definitions require explicit decisions. This is a boundary summary, not authorization to delete production data.",
     )
 )
@@ -1087,21 +1087,21 @@ story.append(
     data_table(
         ["Order", "Action", "Safety note"],
         [
-            ("1", "Stop traffic; snapshot; capture PV/PVC/AZ/EBS mapping", "Do this before deleting any Kubernetes parent"),
-            ("2", "Delete every RestateDeployment and wait for finalizers", "Do not strip finalizers; revisions may need to drain"),
+            ("1", "Pause new traffic; snapshot; capture PV/PVC/AZ/EBS mapping", "Complete before deleting a Kubernetes parent"),
+            ("2", "Delete every RestateDeployment and wait for finalizers", "Allow finalizers to finish the drain"),
             ("3", "Delete RestateCluster/restate and wait for namespace deletion", "PVCs disappear; Retain should leave EBS volumes"),
             ("4", "Record Released PV and EBS mapping again", "Preserves the link between Kubernetes and billable AWS volumes"),
-            ("5", "Uninstall operator; then namespaces and StorageClass", "Remove CRDs only after a cluster-wide dependency check"),
+            ("5", "Uninstall operator; then namespaces and StorageClass", "Retain CRDs until the cluster-wide dependency check"),
             ("6", "Decide retention for EBS, S3, IAM, and OIDC", "OIDC is shared; bucket and volumes may still contain recovery data"),
         ],
         [18 * mm, 79 * mm, 72 * mm],
     )
 )
-story.append(Spacer(1, 9))
+story.append(Spacer(1, 3))
 story.append(
     callout(
         "WHAT SURVIVES",
-        "With the repository defaults, three EBS volumes, the S3 bucket and objects, IAM role and policy, and the cluster OIDC provider can remain after Kubernetes cleanup. The EKS cluster always remains because this repository never creates it.",
+        "With the repository defaults, three EBS volumes, the S3 bucket and objects, IAM role and policy, and the cluster OIDC provider can remain after Kubernetes cleanup. The EKS cluster also remains because this repository leaves it unchanged.",
         "amber",
     )
 )
@@ -1127,7 +1127,7 @@ story.append(P(f"This companion was generated from repository commit <b>{args.so
 story.append(P("Official background: <font color='#007F86'>https://docs.restate.dev/foundations/key-concepts</font><br/>Operator project: <font color='#007F86'>https://github.com/restatedev/restate-operator</font>", "BodySmall"))
 story.append(
     P(
-        "<b>Source-of-truth rule:</b> If this PDF and the checked-out repository disagree, stop. Use the repository revision under change control and re-run <b>nix-shell --run ./scripts/validate.sh</b> before deployment.",
+        "<b>Source-of-truth note:</b> If this PDF and the checked-out repository disagree, please pause and use the repository revision under change control. Re-run <b>nix-shell --run ./scripts/validate.sh</b> before deployment.",
         "BodySmall",
     )
 )
