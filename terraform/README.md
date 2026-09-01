@@ -359,7 +359,15 @@ Before confirming either destroy:
 - record the PV-to-EBS volume mapping; the `Retain` policy preserves the PVs but
   does not reattach them automatically;
 - expect the non-empty S3 bucket to refuse deletion because `force_destroy` is
-  false.
+  false. That is deliberate, and the remedy is a decision rather than a flag:
+  either keep the snapshots and `state rm` the bucket, or empty it explicitly
+  with `aws s3 rm "s3://$BUCKET" --recursive` and destroy again.
+
+A successful destroy of both stages still leaves the retained EBS volumes, the
+snapshot bucket, the IAM role and policy, and the OIDC provider. The full
+inventory, and why the volume mapping has to be captured before the EKS cluster
+goes away, is in
+[what a completed teardown leaves behind](../docs/05-operations.md#what-a-completed-teardown-leaves-behind).
 
 If stage 01 created the IAM OIDC provider, destroying it breaks every IRSA role
 that trusts that cluster issuer, including unrelated workloads. When the EKS

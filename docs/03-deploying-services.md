@@ -219,6 +219,11 @@ kubectl delete -f resources/05-restate-compute.yaml
 kubectl -n restate-apps get restatedeployments,replicasets,services -w
 ```
 
+This was verified on 2026-09-01 against a live cluster with no in-flight
+invocations: the finalizer drained the revision and the operator removed the
+ReplicaSet, Services, and pods, leaving the namespace empty without manual
+intervention.
+
 An object that remains `Terminating` is usually waiting for pinned invocations,
 not stuck. Inspect the Restate deployment before considering finalizer changes.
 If the target `RestateCluster` no longer exists, the operator permits immediate

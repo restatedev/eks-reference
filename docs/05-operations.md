@@ -441,7 +441,10 @@ Changing only the container image is not a complete upgrade review.
 Two independent mechanisms protect different failure modes:
 
 - **Retained EBS PVs** preserve the node-local data volumes if the
-  `RestateCluster`, namespace, or PVCs are deleted.
+  `RestateCluster`, namespace, or PVCs are deleted. Verified on 2026-09-01
+  against a full teardown, which is the strongest form of this case: the CR,
+  namespace, PVCs, CRDs, operator, and StorageClass were all deleted and the
+  three volumes survived as `Released` PVs.
 - **S3 partition snapshots** allow nodes to bootstrap without replaying the
   entire retained log and provide recovery material outside the EBS volumes.
 
@@ -476,5 +479,42 @@ to drain and data resources may need to survive.
    explicit data-retention decision.
 7. Preserve a cluster-wide IAM OIDC provider if any other IRSA workload uses it.
 
+This order was executed end to end on a live three-node cluster on 2026-09-01.
+Steps 2 and 3 behaved as documented: the `RestateDeployment` finalizer drained
+its revision and removed the ReplicaSet, Services, and pods, leaving
+`restate-apps` empty; deleting the `RestateCluster` then removed the namespace
+and PVCs while all three PVs became `Released` with their EBS volumes intact.
+
 For Terraform-specific ordering and the OIDC state escape hatch, follow
 [Terraform: Destroy](../terraform/README.md#destroy).
+
+### What a completed teardown leaves behind
+
+Every step above can succeed and still leave billable AWS resources. Deleting
+the `RestateCluster`, its namespace and PVCs, the CRDs, the operator release,
+and the StorageClass removes nothing on this list — verified by doing exactly
+that:
+
+| Survives | Why | Removing it |
+|---|---|---|
+| 3 × EBS volumes behind `Released` PVs | `reclaimPolicy: Retain`, working as intended | Explicit `aws ec2 delete-volume` per volume |
+| Snapshot bucket and its objects | Dedicated bucket, no lifecycle rule | Empty it, then delete the bucket |
+| Snapshots IAM role and policy | Not owned by any Kubernetes object | Detach and delete, or leave for reuse |
+| IAM OIDC provider | Cluster-wide, shared by every IRSA role | Keep unless the EKS cluster is going too |
+| The EKS cluster itself | This repository never creates it | Your cluster provisioning tool |
+
+The retained volumes are the item most often forgotten, and the window to
+identify them is narrower than it looks: the PV objects that carry the
+`vol-*` handles live in the cluster, so deleting the EKS cluster destroys the
+mapping while leaving the volumes themselves provisioned and billing. Capture
+it while the cluster still answers:
+
+```bash
+kubectl get pv \
+  -o custom-columns='PV:.metadata.name,STATUS:.status.phase,VOLUME:.spec.csi.volumeHandle,SIZE:.spec.capacity.storage'
+```
+
+Reading PV objects needs no AWS credentials, only a working kubeconfig, so this
+remains possible even when `aws sts get-caller-identity` is failing. If the
+cluster is already gone, the volumes are still findable by their EBS tags, but
+that is a recovery path — record the mapping instead.
