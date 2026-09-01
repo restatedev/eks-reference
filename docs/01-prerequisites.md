@@ -185,25 +185,48 @@ Terraform path uses `aws eks get-token` directly, but needs equivalent access.
 
 ## OCI chart registry access
 
-The Restate operator chart is an OCI artifact published in GitHub Container
-Registry (GHCR). The source repository and release notes are public, but GHCR
-may require authentication for chart pulls depending on the client and
-registry policy. If Helm reports `401` or `403` while fetching
-`restate-operator-helm`, authenticate before installing the operator or running
-the Terraform/OpenTofu plan:
+The Restate operator chart is an OCI artifact in GitHub Container Registry:
+`oci://ghcr.io/restatedev/restate-operator-helm`. The package is public and
+pulls anonymously, so registry credentials are **not** a prerequisite of this
+reference.
+
+Two situations still produce `401` or `403` while fetching the chart, in
+decreasing order of likelihood:
+
+1. **A credential you already have.** GHCR rejects a stale or insufficiently
+   scoped credential instead of falling back to anonymous access, so a
+   `ghcr.io` entry in `~/.docker/config.json` or an earlier
+   `helm registry login` can make a public pull fail. GitHub tokens without the
+   `read:packages` scope fail exactly this way. Clear the credential and retry:
+
+   ```bash
+   helm registry logout ghcr.io || true
+   docker logout ghcr.io || true
+   ```
+
+2. **An environment that blocks anonymous registry access**, such as an egress
+   proxy or an authenticated mirror. Log in with a GitHub token that carries
+   `read:packages`:
+
+   ```bash
+   export GHCR_USERNAME=...       # GitHub username
+   export GHCR_TOKEN=...          # token with read:packages; do not commit it
+   printf '%s' "$GHCR_TOKEN" | helm registry login ghcr.io \
+     --username "$GHCR_USERNAME" --password-stdin
+   ```
+
+   A token from `gh auth token` works when its scopes include `read:packages`.
+   Run the login in the same shell as Terraform/OpenTofu: the Helm provider
+   fetches the chart during `plan`, not only during apply. If you point Helm at
+   a temporary registry configuration, set `HELM_REGISTRY_CONFIG` before both
+   the login and the plan/apply so the provider reuses the credential.
+
+Verify either way with an explicit pull before installing the operator:
 
 ```bash
-export GHCR_USERNAME=...       # GitHub username
-export GHCR_TOKEN=...          # token with read:packages; do not commit it
-printf '%s' "$GHCR_TOKEN" | helm registry login ghcr.io \
-  --username "$GHCR_USERNAME" --password-stdin
+helm pull oci://ghcr.io/restatedev/restate-operator-helm \
+  --version 3.0.1 --destination /tmp
 ```
-
-Run the login in the same shell as Terraform/OpenTofu. If you use a temporary
-Helm registry configuration, set `HELM_REGISTRY_CONFIG` before both the login
-and the plan/apply so the Helm provider can reuse the credentials. A GitHub
-token supplied by `gh auth token` is also suitable when it has the
-`read:packages` scope.
 
 ## Tooling
 
@@ -214,15 +237,15 @@ Choose one path; you do not need every tool in both columns.
 | AWS CLI v2 | ✓ | ✓ | Identity, EKS lookup, IAM, S3, exec auth |
 | `kubectl` | ✓ | recommended | Apply and diagnose Kubernetes resources |
 | `eksctl` | ✓ | — | OIDC provider and IRSA role plumbing |
-| Helm | ✓ | ✓* | Install the operator manually; authenticate the OCI chart when Terraform invokes Helm |
+| Helm | ✓ | optional* | Install the operator manually; verify or authenticate the OCI chart pull |
 | Terraform ≥1.5 or OpenTofu | — | ✓ | Apply the two Terraform stages |
 | `jq` | ✓ | recommended | Format API responses |
 | `restatectl` | via pod | via pod | Cluster status, provisioning, snapshots |
 | `restate` CLI | optional | optional | Service/deployment administration |
 
-`*` The Terraform Helm provider installs the release itself; the Helm CLI is
-listed for the `helm registry login` step when GHCR does not allow anonymous
-OCI pulls.
+`*` The Terraform Helm provider installs the release itself, so the Terraform
+path does not need the Helm CLI. It is useful for the `helm pull` check above,
+and required only if your environment forces a `helm registry login`.
 
 An optional Nix development shell is provided:
 

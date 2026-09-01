@@ -152,22 +152,6 @@ For the EKS Pod Identity alternative, see
 `resources/02-restate-operator.values.yaml` is a Helm values file, not a
 Kubernetes manifest:
 
-If the GHCR registry requires authentication in your environment, log in
-before running this command. Use a GitHub token with the `read:packages` scope
-and keep it out of source control:
-
-```bash
-export GHCR_USERNAME=...
-export GHCR_TOKEN=...
-printf '%s' "$GHCR_TOKEN" | helm registry login ghcr.io \
-  --username "$GHCR_USERNAME" --password-stdin
-```
-
-The same registry login is needed before a Terraform/OpenTofu stage-01 plan,
-because the Helm provider fetches this OCI chart during planning. If Helm
-reports `401` or `403`, repeat the login and verify that the token can read
-GitHub packages.
-
 ```bash
 helm upgrade --install restate-operator \
   oci://ghcr.io/restatedev/restate-operator-helm \
@@ -189,14 +173,23 @@ The v3 chart installs and upgrades its CRDs. It does not require cert-manager.
 
 ### If the chart pull fails with 401 or 403
 
-These responses mean that GHCR rejected the chart request. The source
-repository and release may be public while the OCI package still requires
-authentication for your client or registry policy. Repeat the login above with
-a GitHub token that has the `read:packages` scope and make sure the registry
-configuration is visible to the Helm or Terraform/OpenTofu process. If you
-intentionally need to test anonymous access, clear any stale GHCR credential
-with `helm registry logout ghcr.io` and retry; an anonymous 401/403 is still a
-registry-access prerequisite failure, not a Kubernetes or AWS failure.
+The chart is public and pulls anonymously, so the first suspect is a credential
+you already have rather than a missing one: GHCR rejects a stale or
+insufficiently scoped `ghcr.io` credential instead of falling back to anonymous
+access. Clear it and retry the pull on its own:
+
+```bash
+helm registry logout ghcr.io || true
+docker logout ghcr.io || true
+helm pull oci://ghcr.io/restatedev/restate-operator-helm \
+  --version 3.0.1 --destination /tmp
+```
+
+If the unauthenticated pull also fails, your environment blocks anonymous
+registry access; authenticate as described in
+[Prerequisites: OCI chart registry access](01-prerequisites.md#oci-chart-registry-access).
+Either way this is a registry-access failure, not a Kubernetes or AWS failure,
+and nothing in the cluster has changed yet.
 
 ## Step 4: Create storage and the Restate cluster
 
