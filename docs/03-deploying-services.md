@@ -13,6 +13,18 @@ from your application's pipeline, and does not belong in the state that owns the
 cluster. Apply the manifest below with `kubectl`, or fold it into whatever
 already ships your applications.
 
+That is a boundary of the deployment paths, not of the operator. The operator
+installed in stage 01 reconciles `RestateDeployment` resources the same way it
+reconciles the cluster — revisioning, registration, and draining are its job,
+described below. Upstream references for the same model:
+
+- [operator service examples](https://github.com/restatedev/restate-operator/tree/main/examples/services/greeter)
+  — a working `RestateDeployment`, plus a Knative variant
+  ([`replicaset-v1.yaml`](https://github.com/restatedev/restate-operator/blob/main/examples/services/greeter/k8s/replicaset-v1.yaml));
+- [Restate on Kubernetes](https://docs.restate.dev/deploy/services/kubernetes);
+- [restate-operator](https://github.com/restatedev/restate-operator) — the
+  operator itself, including its CRD reference.
+
 The operator behavior below was verified against chart `3.0.1`. For the
 Restate-side compatibility model, see
 [Service versioning](https://docs.restate.dev/services/versioning).

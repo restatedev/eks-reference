@@ -205,9 +205,12 @@ spec:
 
       # Deliberately unset, like the profile: the address the Web UI's
       # playground (served on the admin port) tells the BROWSER to send
-      # invocations to. No single value suits both a `kubectl port-forward`
-      # workflow (http://localhost:8080/) and a shared ingress URL, and setting
-      # it rolls all three pods. See
+      # invocations to. Unset means the admin API advertises the serving pod's
+      # own IP — check with `curl localhost:9070/version | jq -r
+      # .ingress_endpoint` — which no browser outside the VPC can reach, so the
+      # playground fails while the UI itself works. No single value suits both a
+      # `kubectl port-forward` workflow (http://localhost:8080/) and a shared
+      # ingress URL, and setting it rolls all three pods. See
       # docs/05-operations.md#web-ui-and-the-playground before adding it.
       #
       # NOT the same setting as RESTATE_ADVERTISED_ADDRESS above, which is this

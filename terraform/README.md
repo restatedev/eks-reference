@@ -225,23 +225,35 @@ Use the [manual runbook completion checklist](../docs/02-runbook.md#completion-c
 and [Operations guide](../docs/05-operations.md) for the rest of the health
 checks.
 
-## SDK services are out of scope
+## SDK services: operator-managed, not Terraform-managed
 
 These modules deploy the Restate cluster. They do not deploy your services, and
 there is no `service_image` variable.
 
-That is a deliberate boundary rather than a missing feature. A `RestateDeployment`
-is application lifecycle: it changes on every image build, at your application's
-cadence, from your application's pipeline. Putting it in this state would mean
-every image bump is an infrastructure change, `terraform plan` reports drift
-whenever anything else rolls out a revision, and `terraform destroy` on the
-cluster blocks on the operator's drain finalizer waiting for in-flight
-invocations. Cluster state and application state also have very different blast
-radii, and sharing one state file gives them the same one.
+Your services are still managed, just not from here. The operator reconciles
+them through its own `RestateDeployment` custom resource, which gives each
+revision an immutable ReplicaSet and Service, registers it with the cluster's
+admin API automatically, and drains superseded revisions only once no invocation
+is still pinned to them. That is a better lifecycle than Terraform could offer
+for this object, and it is already running in the cluster stage 01 installed.
 
-Deploy services with `kubectl` from `resources/05-restate-compute.yaml`, or from
-whatever already deploys your applications. See
-[Deploying SDK services](../docs/03-deploying-services.md).
+Keeping it out of this state is deliberate. A `RestateDeployment` changes on
+every image build, at your application's cadence, from your application's
+pipeline. Holding it here would make each image bump an infrastructure change,
+report plan drift whenever anything else rolls out a revision, and make
+`terraform destroy` of the cluster block on the operator's drain finalizer
+waiting for in-flight invocations. Cluster state and application state also have
+very different blast radii, and one state file gives them the same one.
+
+Apply `resources/05-restate-compute.yaml` with `kubectl`, or fold it into
+whatever already ships your applications:
+
+- [Deploying SDK services](../docs/03-deploying-services.md) — the lifecycle
+  contract, rollout, drain, rollback, and per-symptom troubleshooting;
+- [operator service examples](https://github.com/restatedev/restate-operator/tree/main/examples/services/greeter)
+  — upstream `RestateDeployment` manifests, including a Knative variant;
+- [Restate on Kubernetes](https://docs.restate.dev/deploy/services/kubernetes)
+  — the product documentation for the same model.
 
 What stage 02 does provide is everything the cluster side of registration needs,
 including the Service-CIDR egress policy described above — so a service deployed

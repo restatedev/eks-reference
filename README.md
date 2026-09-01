@@ -70,7 +70,9 @@ Do not mix the paths in the same installation without importing the existing
 AWS and Kubernetes resources into Terraform state.
 
 Both paths deploy the cluster and stop there. Your SDK services are deployed
-separately, with `kubectl` or your existing application pipeline — see
+separately, with `kubectl` or your existing application pipeline — but they are
+still operator-managed: the operator reconciles them as `RestateDeployment`
+resources, handling revisioning, registration, and draining. See
 [Deploying services](docs/03-deploying-services.md).
 
 ## Architecture at a glance

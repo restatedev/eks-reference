@@ -80,29 +80,40 @@ kubectl -n restate port-forward svc/restate 8080:8080 9070:9070
 # then open http://localhost:9070/ui
 ```
 
-Forwarding only 9070 gets you a working UI that cannot invoke anything. The
-playground sends invocations to the **ingress** port, 8080, and your browser is
-what dials it — so the URL the UI uses has to resolve from your machine, not
-from inside the cluster. Use identical local and remote ports, as above, so
-that whichever address the UI resolves for ingress reaches the tunnel.
+Forwarding only 9070 gets you a working UI that cannot invoke anything, because
+the playground sends invocations to the **ingress** port and your browser is
+what dials it. The address it uses must therefore resolve from your machine, not
+from inside the cluster.
 
-Restate takes that address from `[ingress] advertised-address`, environment
-variable `RESTATE_INGRESS__ADVERTISED_ADDRESS`. This reference leaves it unset,
-matching the profile. Do not confuse it with the top-level
-`RESTATE_ADVERTISED_ADDRESS` that `resources/04-restate-cluster.yaml` does set:
-that one is the node's own address on 5122 for peer traffic, and changing it
-breaks cluster formation.
+Ask the cluster which address it advertises:
 
-If the playground cannot reach ingress through the port-forward, set the
-ingress advertised address to the tunnel:
+```bash
+curl --fail --silent localhost:9070/version | jq -r .ingress_endpoint
+```
+
+With this reference as shipped, that returns the serving pod's own IP, for
+example `http://192.168.130.168:8080/`. A browser on your laptop cannot reach a
+VPC pod IP, so the playground's invocations fail even while the UI itself works
+and `curl localhost:8080/...` succeeds through your forward. The advertised
+address is not derived from the page you loaded the UI from.
+
+Restate takes it from `[ingress] advertised-address`, environment variable
+`RESTATE_INGRESS__ADVERTISED_ADDRESS`, which this reference leaves unset to match
+the profile. Do not confuse it with the top-level `RESTATE_ADVERTISED_ADDRESS`
+that `resources/04-restate-cluster.yaml` does set: that one is the node's own
+address on 5122 for peer traffic, and repurposing it breaks cluster formation.
+
+To make the playground work through a port-forward, advertise the tunnel:
 
 ```yaml
 - name: RESTATE_INGRESS__ADVERTISED_ADDRESS
   value: http://localhost:8080/
 ```
 
-That value is correct only for people using a port-forward. It is a per-
-environment choice, which is why no value ships here.
+Keep the forward's local port equal to 8080 so that address resolves. This value
+is correct only for people reaching the cluster by port-forward, which is why no
+value ships here — see the next section for a shared cluster. Changing it rolls
+all three Restate pods.
 
 ### Making the playground work for a team
 
