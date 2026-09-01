@@ -138,6 +138,7 @@ deployment paths:
 | [`03-gp3-storageclass.yaml`](resources/03-gp3-storageclass.yaml) | Encrypted `restate-gp3` StorageClass with retained PVs |
 | [`04-restate-cluster.yaml`](resources/04-restate-cluster.yaml) | Three-node `RestateCluster` and runtime configuration |
 | [`05-restate-compute.yaml`](resources/05-restate-compute.yaml) | Example `RestateDeployment` for an SDK service |
+| [`06-restate-service-cidr-egress.yaml`](resources/06-restate-service-cidr-egress.yaml) | Lets Restate reach service ClusterIPs where the CNI enforces NetworkPolicy |
 
 The manual path requires every active `REPLACE_ME_*` value in a file being
 applied to be replaced first. The commented Pod Identity alternative may stay

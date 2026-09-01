@@ -129,6 +129,18 @@ pods in `restate-apps` and admits ingress only from the `restate` namespace.
 That stops unrelated cluster workloads calling an SDK endpoint directly and
 bypassing Restate.
 
+That label-based egress rule covers service **pod IPs**, and the operator
+registers each revision by its **Service name**, which resolves to a ClusterIP.
+Where the CNI evaluates policy before kube-proxy's DNAT — the EKS VPC CNI does,
+because its agent hooks the pod's veth — the ClusterIP matches neither the
+label-expanded pod IPs nor the internet-egress rule, which excludes private
+ranges. Registration then times out with healthy service pods, and the gap is
+not expressible in the `RestateCluster` CRD, which has no egress peer field. So
+this reference owns a third policy for it,
+`resources/06-restate-service-cidr-egress.yaml`, which allows the Restate pods
+TCP 9080 into the Service CIDR. Calico and Cilium evaluate after DNAT and do not
+need it.
+
 ### CNI enforcement
 
 Kubernetes accepts NetworkPolicy objects even when no network-policy engine is
@@ -139,6 +151,11 @@ the policy objects are visible but inert: every pod can reach ports 9070 and
 The deployment can function without enforcement only when the EKS cluster is
 single-tenant and every workload is trusted with Restate administration and
 direct SDK access. See [Prerequisites](01-prerequisites.md#network-isolation).
+
+Enforcement is not free of consequences either: with it on, service
+registration additionally requires
+`resources/06-restate-service-cidr-egress.yaml`, for the pre-DNAT reason
+described under [SDK service isolation](#sdk-service-isolation).
 
 ### Private AWS endpoints
 

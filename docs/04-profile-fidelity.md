@@ -73,6 +73,12 @@ intentional.
   and keeps the unauthenticated admin API closed to workloads entirely
   (port-forward is the ops path). Cloud has no equivalent of our
   `restate-apps` inbound lockdown — its SDK services live outside the cell.
+- Service-CIDR egress (`resources/06-restate-service-cidr-egress.yaml`) has no
+  counterpart in the profile: it is an EKS artifact, not a Restate setting.
+  Where the VPC CNI enforces NetworkPolicy it evaluates egress before Service
+  DNAT, so the operator's pod-label rule does not cover the ClusterIP it
+  registers each service revision under. Cloud does not hit this because its
+  SDK services live outside the cell entirely.
 - `AWS_REGION` is set explicitly here; cloud leaves region resolution to the
   node's IMDS (its nodes allow pod IMDS access, hop limit 2 — yours might
   not).

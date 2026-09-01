@@ -23,6 +23,7 @@ NetworkPolicy enforcement.
 
 02-restate
   ├─ RestateCluster/restate
+  ├─ Service-CIDR egress NetworkPolicy (opt-out)
   └─ optional RestateDeployment/service
 ```
 
@@ -74,6 +75,7 @@ Both stages read the same `terraform.tfvars` and declare the same input set.
 | `snapshots_bucket` | ✓ | — | Globally unique bucket name dedicated to this Restate cluster |
 | `service_image` | — | `""` | SDK service image; empty skips `RestateDeployment/service` |
 | `create_oidc_provider` | — | `false` | Create the cluster IAM OIDC provider instead of looking it up |
+| `create_service_cidr_egress_policy` | — | `true` | Apply the Service-CIDR egress policy; required where the CNI enforces NetworkPolicy |
 
 ## Authentication and authorization
 
@@ -122,6 +124,25 @@ for the logout-and-retry path and, for environments that genuinely block
 anonymous pulls, the login path. If you do authenticate, keep the login and the
 plan/apply in the same shell, and export `HELM_REGISTRY_CONFIG` before both
 when using a temporary registry configuration.
+
+## Service-CIDR egress policy
+
+Stage 02 applies `resources/06-restate-service-cidr-egress.yaml` by default,
+allowing the Restate pods TCP 9080 into the cluster's Service CIDR. It exists
+because the operator opens egress to service **pod IPs** while registering each
+revision by its **Service name**, and the EKS VPC CNI evaluates egress before
+kube-proxy rewrites the ClusterIP. Without the policy, `RestateDeployment`
+registration times out even though the service pods are Ready.
+
+Nothing to configure: the CIDR comes from
+`data.aws_eks_cluster.this.kubernetes_network_config[0].service_ipv4_cidr`, so
+it always matches the cluster being applied to. On a CNI that evaluates after
+DNAT (Calico, Cilium) the policy is unnecessary rather than harmful, and
+`create_service_cidr_egress_policy = false` skips it.
+
+The policy lives in the operator-owned namespace, so destroying the
+`RestateCluster` removes it too. Its full rationale and the exact scope of the
+allowance are in the manifest's header.
 
 ## Quick start
 
@@ -295,6 +316,7 @@ the Restate cluster, PVs, snapshot bucket, or cluster OIDC provider.
 | OIDC create reports `EntityAlreadyExists` | Provider already exists; keep the default lookup mode |
 | Kubernetes provider is unauthorized | AWS identity lacks EKS access entry/`aws-auth` mapping or Kubernetes RBAC |
 | Stage 02 cannot resolve Restate kinds | Stage 01 did not install the operator CRDs in this cluster |
+| `RestateDeployment` stays NotReady with Ready service pods | Registration cannot reach the revision's ClusterIP; the Service-CIDR egress policy is missing or was disabled ([architecture](../docs/00-architecture.md#sdk-service-isolation)) |
 | Snapshot role lookup fails | Stage 01 was not applied with the same `cluster_name` |
 | Restate pods stay Pending | Capacity, anti-affinity, taint, EBS CSI, or Availability Zone issue |
 | Stage 02 times out waiting for Ready | Inspect the RestateCluster, pods, and operator logs; see the Operations guide |

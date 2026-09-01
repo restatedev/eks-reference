@@ -1,0 +1,77 @@
+# Egress from the Restate cluster to SDK service ClusterIPs.
+#
+# REQUIRED wherever the CNI evaluates NetworkPolicy before Service DNAT, which
+# includes the EKS VPC CNI with NetworkPolicy enforcement enabled (the vpc-cni
+# addon's `enableNetworkPolicy=true`). Without it, the operator's registration
+# request to a new service revision times out and the RestateDeployment never
+# becomes Ready — while the service pods themselves look perfectly healthy.
+#
+# Why the operator's own egress policy is not enough. The operator opens egress
+# from the cluster namespace to service pods by matching the label
+# `allow.restate.dev/restate: "true"` it stamps on them, and it excludes private
+# ranges from its general internet-egress rule. Both are correct in isolation.
+# Neither covers the address Restate actually dials: the operator registers each
+# revision by its Service name, which resolves to a ClusterIP. The AWS VPC CNI
+# policy agent attaches its eBPF programs at the pod's veth, so it evaluates
+# egress against the ORIGINAL destination — the ClusterIP, before kube-proxy
+# rewrites it to a pod IP. A pod-label selector expands to pod IPs, and the
+# ClusterIP range is private, so the ClusterIP matches nothing and the packet is
+# dropped. CNIs that evaluate after DNAT or follow conntrack (Calico, Cilium)
+# never surface this, which is why the operator's model is sufficient there.
+#
+# Verified 2026-09-01 on EKS 1.34 with vpc-cni `enableNetworkPolicy=true`:
+# without this policy, restate -> ClusterIP:9080 times out while restate -> the
+# same pod's IP:9080 connects; with it, registration succeeds and the
+# RestateDeployment reports Ready.
+#
+# Additive by construction: NetworkPolicy rules only ever widen, so the
+# operator's deny-by-default posture and all of its other allowances stay in
+# force. The operator does not prune objects it does not own. This lives in the
+# operator-owned namespace, so it is deleted along with the RestateCluster.
+#
+# Scope of the allowance, stated plainly: Restate pods may open TCP 9080 to any
+# ClusterIP in the cluster, which is wider than "the SDK services in
+# restate-apps". A per-service allowance is not durable — a ClusterIP is
+# assigned at Service creation and changes whenever the Service is recreated,
+# and the operator creates one Service per revision — so the Service CIDR is the
+# narrowest stable form. It grants reachability to a VIP on one port, not to any
+# additional pod: the operator's pod-label rules still decide which pods may be
+# reached.
+#
+# The podSelector deliberately names the Restate pods rather than using `{}`.
+# Those pods already carry operator-managed egress policies, so this file only
+# adds to them; an empty selector would also catch any future pod in the
+# namespace that has no egress policy today and clamp its egress to this single
+# rule. Confirm the labels against your cluster if registration still fails:
+#   kubectl -n restate get pods --show-labels
+#
+# REPLACE_ME_SERVICE_CIDR: the cluster's Service IPv4 CIDR (eksctl default
+# 10.100.0.0/16; EKS clusters created without an explicit value often use
+# 172.20.0.0/16 — do not guess, read it):
+#   aws eks describe-cluster --name "$CLUSTER" --region "$REGION" \
+#     --query 'cluster.kubernetesNetworkConfig.serviceIpv4Cidr' --output text
+#
+# Port 9080 is the container port named `restate` in
+# resources/05-restate-compute.yaml. If your service pods listen on another
+# port, change it in both files.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress-to-service-cidr
+  # The operator creates and owns this namespace, naming it after the
+  # RestateCluster in 04-restate-cluster.yaml — so this file can only be
+  # applied after runbook step 4.
+  namespace: restate
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: restate
+      app.kubernetes.io/instance: restate
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: REPLACE_ME_SERVICE_CIDR
+      ports:
+        - protocol: TCP
+          port: 9080

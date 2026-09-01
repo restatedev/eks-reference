@@ -17,8 +17,13 @@ resource "kubernetes_manifest" "restate_compute" {
     )
   )
 
-  # Not strictly required — the operator retries registration — but ordering
-  # compute after the cluster is Ready avoids a burst of registration
-  # failures in the operator logs on a fresh install.
-  depends_on = [kubernetes_manifest.restate_cluster]
+  # Ordering compute after the cluster is Ready avoids a burst of registration
+  # failures in the operator logs on a fresh install; the operator would retry
+  # regardless. The Service-CIDR egress policy is a harder dependency where the
+  # CNI enforces NetworkPolicy: without it registration does not merely retry,
+  # it times out until the policy exists (see network.tf).
+  depends_on = [
+    kubernetes_manifest.restate_cluster,
+    kubernetes_manifest.service_cidr_egress,
+  ]
 }

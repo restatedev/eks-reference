@@ -178,6 +178,29 @@ port is named `restate`, and `spec.restate.register.cluster` is `restate`.
 Registration also depends on the operator reaching the cluster admin API and
 the Restate namespace reaching the service pods.
 
+If the pods are Ready and registration still times out, test the two hops
+separately from a Restate pod — reachable pod IP with an unreachable ClusterIP
+is the signature of the missing Service-CIDR egress policy:
+
+```bash
+SVC_IP="$(kubectl -n restate-apps get svc <revision-svc> \
+  -o jsonpath='{.spec.clusterIP}')"
+POD_IP="$(kubectl -n restate-apps get pod <pod> \
+  -o jsonpath='{.status.podIP}')"
+
+kubectl -n restate exec restate-0 -- curl -sS -m 5 -o /dev/null \
+  -w 'pod %{http_code} %{time_total}s\n' "http://$POD_IP:9080/"
+kubectl -n restate exec restate-0 -- curl -sS -m 5 -o /dev/null \
+  -w 'clusterip %{http_code} %{time_total}s\n' "http://$SVC_IP:9080/"
+
+kubectl -n restate get networkpolicy allow-egress-to-service-cidr
+kubectl -n restate get policyendpoints
+```
+
+Apply `resources/06-restate-service-cidr-egress.yaml` with the cluster's real
+`serviceIpv4Cidr` if that policy is absent. See
+[Architecture: SDK service isolation](00-architecture.md#sdk-service-isolation).
+
 ### An old service revision does not scale down
 
 This is normally expected. Restate keeps an old revision alive while any

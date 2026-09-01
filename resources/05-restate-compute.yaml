@@ -9,9 +9,15 @@
 # only once they have no in-flight invocations. Lifecycle details:
 # docs/03-deploying-services.md.
 #
-# Cross-namespace networking is handled by the operator: it stamps the pods
-# with the label `allow.restate.dev/restate: "true"`, which the RestateCluster's
-# egress NetworkPolicy matches in any namespace.
+# Cross-namespace networking is mostly handled by the operator: it stamps the
+# pods with the label `allow.restate.dev/restate: "true"`, which the
+# RestateCluster's egress NetworkPolicy matches in any namespace.
+#
+# That covers the pod IPs but not the Service ClusterIP the operator registers,
+# which matters on any CNI that evaluates NetworkPolicy before Service DNAT —
+# the EKS VPC CNI included. There, registration times out until
+# resources/06-restate-service-cidr-egress.yaml is applied, even though these
+# pods are Ready. See that file's header for the mechanism.
 apiVersion: restate.dev/v1beta1
 kind: RestateDeployment
 metadata:

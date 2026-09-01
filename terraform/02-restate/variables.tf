@@ -53,3 +53,18 @@ variable "create_oidc_provider" {
   type        = bool
   default     = false
 }
+
+variable "create_service_cidr_egress_policy" {
+  description = <<-EOT
+    Whether stage 02 applies resources/06-restate-service-cidr-egress.yaml,
+    which lets the Restate pods reach SDK service ClusterIPs on 9080. Required
+    wherever the CNI evaluates NetworkPolicy before Service DNAT (the EKS VPC
+    CNI with enforcement on), because the operator opens egress to service pod
+    IPs but not to the ClusterIP it registers each revision under — service
+    registration times out without it. Defaults to true; the CIDR itself is
+    read from the EKS cluster, not configured here. Set false only on a CNI
+    that evaluates after DNAT (Calico, Cilium), where it is unnecessary.
+  EOT
+  type        = bool
+  default     = true
+}

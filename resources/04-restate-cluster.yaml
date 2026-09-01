@@ -335,6 +335,14 @@ spec:
     # automatically per RestateDeployment via the allow.restate.dev/restate
     # pod label — nothing to configure here for the compute namespace.
     #
+    # One gap that combination leaves, and it is not configurable here: the
+    # pod-label rule expands to pod IPs, and the excluded private ranges
+    # include the Service CIDR, so the ClusterIP the operator registers is in
+    # no allowed set. On a CNI that evaluates policy before Service DNAT (the
+    # EKS VPC CNI with enforcement on) registration therefore times out. The
+    # CRD has no egress peer field, so the fix ships as a separate additive
+    # policy: resources/06-restate-service-cidr-egress.yaml.
+    #
     # This peer additionally lets the compute namespace call INTO the
     # cluster's ingress (:8080, invoke).
     #

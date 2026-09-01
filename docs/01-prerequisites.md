@@ -14,6 +14,9 @@ or cluster access for you.
 - [ ] Restate data will use persistent EBS, not instance-store volumes.
 - [ ] The NetworkPolicy enforcement choice and its security consequence are
       understood.
+- [ ] Where NetworkPolicy is enforced, the cluster's Service IPv4 CIDR is
+      recorded — `resources/06-restate-service-cidr-egress.yaml` needs it, and
+      service registration fails without it.
 - [ ] The AWS identity can manage the required S3 and IAM resources.
 - [ ] The Kubernetes identity can create cluster-scoped and namespaced
       resources and install the operator.
@@ -57,9 +60,16 @@ eligible nodes.
 | Prefer 3 Availability Zones | Reduces correlated node/AZ failure risk |
 | Persistent EBS support | Restate data must survive node replacement |
 
-`m7i.8xlarge` fits comfortably. `c7i.8xlarge` has 64 GiB total memory and fits
-with less kubelet/system headroom. Instance types with local NVMe (`*d`) must
-not be used as a substitute for the persistent EBS volumes.
+`m7i.8xlarge` fits comfortably. `c7i.8xlarge` also fits, and has been measured:
+on EKS 1.34 with AL2023, a `c7i.8xlarge` reports 31,850m CPU and 58.9 GiB
+allocatable, and with the Restate pod plus system pods scheduled the node sits
+at 76-79% of allocatable CPU and 85-87% of allocatable memory — roughly 7 GiB
+of memory headroom. That works, and it leaves little room for anything else on
+those nodes. Choose `m7i.8xlarge` if a log shipper, APM agent, service-mesh
+sidecar, or any other per-node workload will share them.
+
+Instance types with local NVMe (`*d`) must not be used as a substitute for the
+persistent EBS volumes.
 
 Inspect current allocatable capacity and placement labels:
 
@@ -112,6 +122,28 @@ kubectl api-resources | grep policyendpoints
 The add-on setting is `enableNetworkPolicy: true` (represented as
 `ENABLE_NETWORK_POLICY=true` in the `aws-node` DaemonSet). Seeing
 NetworkPolicy objects alone does not prove enforcement.
+
+### Enforcement requires one extra policy
+
+Turning enforcement on has a consequence the operator cannot handle for you.
+The VPC CNI evaluates egress at the pod's veth, before kube-proxy rewrites a
+Service ClusterIP to a pod IP, so the operator's pod-label egress rule — which
+expands to pod IPs — does not cover the ClusterIP it registers each service
+revision under. Registration then times out and the RestateDeployment never
+becomes Ready, while the service pods look healthy. The fix is
+`resources/06-restate-service-cidr-egress.yaml`, applied at the end of runbook
+step 4 and automatic on the Terraform path. Read its header for the full
+mechanism and for the exact scope of the allowance it grants.
+
+Record the Service CIDR it needs:
+
+```bash
+aws eks describe-cluster --name "$CLUSTER" --region "$REGION" \
+  --query 'cluster.kubernetesNetworkConfig.serviceIpv4Cidr' --output text
+```
+
+Do not assume a value. `eksctl` defaults to `10.100.0.0/16`, while clusters
+created without an explicit setting are often `172.20.0.0/16`.
 
 ## AWS resources and permissions
 
@@ -276,10 +308,68 @@ grep -RIn 'REPLACE_ME' resources
 | `REPLACE_ME_AWS_REGION` | `04-restate-cluster.yaml` | Region used by the Restate AWS SDK |
 | `REPLACE_ME_SNAPSHOTS_ROLE_ARN` | `04-restate-cluster.yaml` | `arn:aws:iam::<account>:role/<cluster>-restate-snapshots` |
 | `REPLACE_ME_SERVICE_IMAGE` | `05-restate-compute.yaml` | SDK service image; apply compute only after setting it |
+| `REPLACE_ME_SERVICE_CIDR` | `06-restate-service-cidr-egress.yaml` | Cluster Service IPv4 CIDR; needed where the CNI enforces NetworkPolicy |
 | `REPLACE_ME_EKS_CLUSTER_NAME` | `02-restate-operator.values.yaml` (commented) | Only for the EKS Pod Identity alternative |
 
 The Terraform path does not modify the files. It replaces the required values
 in memory from `terraform.tfvars`.
+
+## Appendix: an example cluster, for illustration only
+
+This reference does not own cluster creation, and nothing below is part of what
+it manages, supports, or keeps current. It is recorded because the requirements
+above are easier to act on next to a configuration that satisfied them. Treat
+it as a worked example to adapt, not a recommended baseline — in particular,
+review `privateNetworking`, the root volume size, and the AMI family against
+your own standards.
+
+The configuration below was used to create the cluster this repository was last
+validated end to end against, on EKS 1.34 in `eu-central-1`:
+
+```yaml
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: YOUR_CLUSTER
+  region: YOUR_REGION
+
+availabilityZones:
+  - YOUR_REGIONa
+  - YOUR_REGIONb
+  - YOUR_REGIONc
+
+iam:
+  withOIDC: true
+
+addons:
+  - name: vpc-cni
+    configurationValues: |
+      enableNetworkPolicy: "true"
+  - name: coredns
+  - name: kube-proxy
+  - name: aws-ebs-csi-driver
+    wellKnownPolicies:
+      ebsCSIController: true
+
+managedNodeGroups:
+  - name: restate-nodes
+    instanceType: c7i.8xlarge
+    desiredCapacity: 3
+    minSize: 3
+    maxSize: 3
+    amiFamily: AmazonLinux2023
+    volumeSize: 100
+    privateNetworking: true
+```
+
+Three details in it matter to this reference rather than to eksctl. `withOIDC`
+creates the IAM OIDC provider that IRSA needs, which is why the Terraform path
+defaults to looking a provider up rather than creating one. The `vpc-cni`
+`enableNetworkPolicy` value is what makes the NetworkPolicies in `resources/`
+actually enforced, and therefore what makes
+`resources/06-restate-service-cidr-egress.yaml` necessary. The EBS CSI driver
+is required by the `restate-gp3` StorageClass, not optional.
 
 ## Next step
 

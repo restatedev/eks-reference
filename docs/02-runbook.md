@@ -251,6 +251,34 @@ kubectl -n restate exec restate-0 -- restatectl provision --yes
 For the full sequence, see
 [Architecture: Cluster bootstrap](00-architecture.md#cluster-bootstrap-sequence).
 
+### Allow egress to SDK service ClusterIPs
+
+Skip this only if your CNI does not enforce NetworkPolicy. Where it does — the
+EKS VPC CNI with `enableNetworkPolicy: true` included — the operator's egress
+rules cover service pod IPs but not the ClusterIP it registers each service
+revision under, so registration in step 6 will time out until this policy
+exists. The namespace it targets was created by step 4, which is why it is
+applied here rather than earlier.
+
+```bash
+SERVICE_CIDR="$(aws eks describe-cluster --name "$CLUSTER" --region "$REGION" \
+  --query 'cluster.kubernetesNetworkConfig.serviceIpv4Cidr' --output text)"
+echo "$SERVICE_CIDR"
+
+sed "s|REPLACE_ME_SERVICE_CIDR|$SERVICE_CIDR|" \
+  resources/06-restate-service-cidr-egress.yaml | kubectl apply -f -
+
+kubectl -n restate get networkpolicy allow-egress-to-service-cidr
+```
+
+Read the file's header before applying it: it documents the mechanism, and that
+the allowance covers TCP 9080 to any ClusterIP rather than only the SDK
+services. Where enforcement is on, confirm the CNI picked the rule up:
+
+```bash
+kubectl -n restate get policyendpoints
+```
+
 ## Step 5: Prove snapshots work
 
 Do not wait for the automatic cadence: it needs both 100,000 records and five
