@@ -41,18 +41,20 @@ The sizing and runtime tuning come from Restate Cloud's
 
 Read these constraints first; they are not optional sizing trivia.
 
-1. **Capacity:** you need at least three eligible nodes, each with 24
-   allocatable vCPU and 50 GiB allocatable memory. One Restate pod is scheduled
-   per node.
+1. **Capacity:** you need at least three eligible nodes, each with 24 vCPU and
+   50 GiB memory still available for new pod requests after existing system and
+   DaemonSet requests. One Restate pod is scheduled per node.
 2. **Network isolation:** EKS VPC CNI NetworkPolicy enforcement is disabled by
    default. Without it, every pod in the cluster can reach Restate's
    unauthenticated admin API on port 9070 and SDK endpoints on port 9080.
-3. **Snapshots:** the S3 bucket must be dedicated to this Restate cluster. The
+3. **IP family:** this reference currently supports IPv4 EKS clusters only. Its
+   Service-CIDR egress policy is derived from `serviceIpv4Cidr`.
+4. **Snapshots:** the S3 bucket must be dedicated to this Restate cluster. The
    snapshot prefix is not unique across installations.
-4. **Persistent data:** deleting the `RestateCluster` removes its namespace and
+5. **Persistent data:** deleting the `RestateCluster` removes its namespace and
    PVCs. The StorageClass retains the underlying PVs, but recovery is a manual
    operation; retained volumes do not reattach automatically.
-5. **Existing infrastructure:** the EBS CSI driver, sufficient EKS access, and
+6. **Existing infrastructure:** the EBS CSI driver, sufficient EKS access, and
    an IAM OIDC provider for IRSA must already exist unless the Terraform path
    is explicitly told to create the OIDC provider.
 
@@ -130,6 +132,7 @@ terraform/01-foundation
                        S3, IAM/IRSA, namespaces, StorageClass, operator
 terraform/02-restate   RestateCluster and its Service-CIDR egress policy
 docs/                  architecture, deployment, operations, and design notes
+scripts/               repository validation checks
 shell.nix              optional development shell with the required CLI tools
 ```
 
@@ -147,11 +150,23 @@ deployment paths:
 | [`06-restate-service-cidr-egress.yaml`](resources/06-restate-service-cidr-egress.yaml) | Lets Restate reach service ClusterIPs where the CNI enforces NetworkPolicy |
 
 The manual path requires every active `REPLACE_ME_*` value in a file being
-applied to be replaced first. The commented Pod Identity alternative may stay
-unset, and the compute image may stay unset while compute is skipped. The
-Terraform path performs the substitutions it needs in memory, from its variables
-and from the EKS cluster itself; the service image is not among them, because
-Terraform does not deploy services.
+applied to be replaced first. The commented, non-automated Pod Identity
+adaptation may stay unset, and the compute image may stay unset while compute is
+skipped. The Terraform path performs the substitutions it needs in memory, from
+its variables and from the EKS cluster itself; the service image is not among
+them, because Terraform does not deploy services.
+
+## Validation
+
+Run the same formatting, Terraform, YAML/JSON, and local documentation-link
+checks used by CI:
+
+```bash
+nix-shell --run ./scripts/validate.sh
+```
+
+The Terraform checks initialize provider plugins but do not contact an EKS
+cluster or AWS account.
 
 ## Important design decisions
 

@@ -81,7 +81,17 @@ the `RestateCluster` is applied.
 The Restate pods use a ServiceAccount named `restate` in namespace `restate`.
 Create a cluster-qualified IAM policy and IRSA role for that exact subject.
 
-First ensure the EKS IAM OIDC provider exists. This command is safe when the
+First confirm that the dedicated bucket required by the prerequisites exists
+and retains its public-access and HTTPS-only controls:
+
+```bash
+aws s3api head-bucket --bucket "$BUCKET"
+aws s3api get-public-access-block --bucket "$BUCKET"
+aws s3api get-bucket-policy --bucket "$BUCKET" \
+  --query Policy --output text | jq
+```
+
+Then ensure the EKS IAM OIDC provider exists. This command is safe when the
 provider is already associated:
 
 ```bash
@@ -144,7 +154,8 @@ existing policy with a new policy version rather than trying to create it
 again. The eksctl-created role lives in an eksctl-managed CloudFormation stack;
 change it with `eksctl update iamserviceaccount` using the same identity flags.
 
-For the EKS Pod Identity alternative, see
+If adapting the reference to EKS Pod Identity—the supplied IAM path does not
+automate it—see
 [Architecture: IAM for snapshots](00-architecture.md#iam-for-snapshots).
 
 ## Step 3: Install the Restate operator
@@ -166,10 +177,15 @@ Verify the controller and CRDs:
 
 ```bash
 kubectl -n restate-operator get deployment,pods
-kubectl get crd restateclusters.restate.dev restatedeployments.restate.dev
+kubectl get crd \
+  restateclusters.restate.dev \
+  restatedeployments.restate.dev \
+  restatecloudenvironments.restate.dev
 ```
 
 The v3 chart installs and upgrades its CRDs. It does not require cert-manager.
+The chart marks those CRDs to survive Helm uninstall; the teardown guide
+performs a cluster-wide dependency check before deleting them explicitly.
 
 ### If the chart pull fails with 401 or 403
 
@@ -241,12 +257,11 @@ kubectl -n restate get pods -o wide
 kubectl -n restate exec restate-0 -- restatectl status
 ```
 
-If automatic provisioning fails after the pods are Running, the manual command
-is idempotent:
-
-```bash
-kubectl -n restate exec restate-0 -- restatectl provision --yes
-```
+If automatic provisioning fails after the pods are Running, inspect the
+`RestateCluster` conditions and operator logs. Do **not** run
+`restatectl provision` while `spec.cluster.autoProvision` remains enabled: it
+can race the controller and operator 3.0.1 warns that concurrent provisioning
+methods can split the cluster.
 
 For the full sequence, see
 [Architecture: Cluster bootstrap](00-architecture.md#cluster-bootstrap-sequence).

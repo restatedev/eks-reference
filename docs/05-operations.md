@@ -251,7 +251,12 @@ holds. Test the denials directly, with throwaway pods that touch nothing:
 
 ```bash
 IMG=curlimages/curl:8.10.1
-GREETER_IP=$(kubectl -n restate-apps get svc -o jsonpath='{.items[0].spec.clusterIP}')
+kubectl -n restate-apps get services
+SDK_SERVICE=service-REPLACE_WITH_REVISION_HASH
+kubectl -n restate-apps get endpointslice \
+  -l "kubernetes.io/service-name=$SDK_SERVICE"
+SDK_IP=$(kubectl -n restate-apps get svc "$SDK_SERVICE" \
+  -o jsonpath='{.spec.clusterIP}')
 
 # from the compute namespace: ingress allowed, admin denied
 kubectl -n restate-apps run probe --rm -i --restart=Never --image=$IMG -- sh -c '
@@ -260,9 +265,14 @@ kubectl -n restate-apps run probe --rm -i --restart=Never --image=$IMG -- sh -c 
 
 # from an unrelated namespace: both denied
 kubectl -n default run probe --rm -i --restart=Never --image=$IMG -- sh -c "
-  curl -sS -m 5 -o /dev/null -w 'default->greeter 9080: %{http_code} %{time_total}s\n' http://$GREETER_IP:9080/ ;
+  curl -sS -m 5 -o /dev/null -w 'default->sdk 9080: %{http_code} %{time_total}s\n' http://$SDK_IP:9080/ ;
   curl -sS -m 5 -o /dev/null -w 'default->ingress 8080: %{http_code} %{time_total}s\n' http://restate.restate.svc.cluster.local:8080/"
 ```
+
+Set `SDK_SERVICE` to a specific operator-generated revision Service and confirm
+its EndpointSlice has ready addresses before interpreting a timeout. Selecting
+the first Service in the namespace is not a valid boundary test: list ordering
+is unspecified, and a Service with no ready endpoint also times out.
 
 **A timeout is the pass signal and a fast connection is the failure.** Both
 render as HTTP `000`, so read `time_total`, not the status code: a denial sits
@@ -275,7 +285,7 @@ Measured on EKS 1.34 with `vpc-cni` enforcement enabled:
 |---|---|---|---|
 | `restate-apps` | ingress 8080 | `400` in 2.1s | reachable, as intended — a bare `GET /` is a 400 from ingress |
 | `restate-apps` | admin 9070 | timeout at 5.0s | denied: workloads cannot reach the unauthenticated admin API |
-| `default` | Greeter 9080 | timeout at 5.0s | denied: an unrelated pod cannot bypass Restate to call an SDK endpoint |
+| `default` | SDK service 9080 | timeout at 5.0s | denied: an unrelated pod cannot bypass Restate to call an SDK endpoint |
 | `default` | ingress 8080 | timeout at 5.0s | denied: `networkPeers.ingress` admits only `restate-apps` |
 
 The fifth direction, Restate reaching a service ClusterIP on 9080, must
@@ -299,6 +309,7 @@ kubectl -n restate describe pod <pod>
 kubectl -n restate get events --sort-by=.lastTimestamp
 kubectl get nodes -o custom-columns=\
 'NAME:.metadata.name,CPU:.status.allocatable.cpu,MEMORY:.status.allocatable.memory'
+kubectl describe node <candidate-node>
 kubectl get storageclass restate-gp3
 ```
 
@@ -306,7 +317,9 @@ Common causes:
 
 - fewer than three eligible nodes because hard anti-affinity permits only one
   Restate pod per node;
-- less than 24 allocatable vCPU or 50 GiB memory on an eligible node;
+- less than 24 vCPU or 50 GiB memory remaining after existing pod requests on
+  an eligible node—the `Allocated resources` section, not `kubectl top`, is the
+  scheduler-relevant view;
 - a taint without a matching toleration;
 - the EBS CSI driver is absent or unhealthy;
 - no subnet/AZ is available for an EBS volume selected by
@@ -322,12 +335,10 @@ kubectl -n restate-operator logs deploy/restate-operator --tail=200
 
 The operator provisions the cluster after `restate-0` is Running; Restate pods
 become Ready afterwards. Look for failed provisioning, metadata peer DNS, or
-configuration validation errors. If automatic provisioning failed, the manual
-fallback is idempotent:
-
-```bash
-kubectl -n restate exec restate-0 -- restatectl provision --yes
-```
+configuration validation errors. Do not run `restatectl provision` while
+`spec.cluster.autoProvision` remains enabled: it can race the controller, and
+operator 3.0.1 warns that concurrent provisioning methods can split the
+cluster.
 
 ### A RestateDeployment is not Ready
 
@@ -466,18 +477,61 @@ bucket merely to make a deployment command succeed.
 ## Teardown checklist
 
 Teardown is intentionally conservative because application revisions may need
-to drain and data resources may need to survive.
+to drain and data resources may need to survive. The order below applies to
+both deployment paths through removal of the `RestateCluster`:
 
-1. Stop new traffic and verify the latest snapshot.
-2. Delete the `RestateDeployment` and wait for its finalizer to drain all
+1. Stop new traffic, create and verify the latest snapshot, and record the
+   current PV/PVC/AZ/EBS mapping **before** deleting anything.
+2. Delete every `RestateDeployment` and wait for its finalizer to drain all
    revisions.
-3. Delete the `RestateCluster`.
-4. Record the Released PV and EBS volume mapping before removing anything else.
-5. Remove the operator and repository-owned namespaces only after the custom
-   resources are gone.
+3. Delete the `RestateCluster` and wait for the operator-owned namespace to
+   terminate.
+4. Record the now-Released PV and EBS mapping again.
+5. Only then remove the operator, repository-owned namespaces, StorageClass,
+   and—after a cluster-wide dependency check—the retained CRDs.
 6. Delete retained EBS volumes and empty/delete the S3 bucket only after an
    explicit data-retention decision.
-7. Preserve a cluster-wide IAM OIDC provider if any other IRSA workload uses it.
+7. Preserve a cluster-wide IAM OIDC provider whenever the EKS cluster remains
+   or any other IRSA role still trusts it.
+
+For the manual path, steps 2 and 3 are:
+
+```bash
+kubectl -n restate-apps delete restatedeployment --all \
+  --wait=true --timeout=15m
+kubectl delete restatecluster restate --wait=true --timeout=15m
+```
+
+If service deletion times out, inspect the pinned invocations and continue
+waiting. Do not remove the finalizer or delete the cluster underneath them.
+
+The remaining manual-path Kubernetes cleanup after steps 1–4 is:
+
+```bash
+helm uninstall restate-operator --namespace restate-operator --wait
+
+# The chart deliberately keeps all three CRDs on uninstall. Before deleting
+# them, prove that no Restate operator installation or custom resource remains.
+kubectl get deployments --all-namespaces \
+  -l app.kubernetes.io/name=restate-operator
+kubectl get restateclusters.restate.dev
+kubectl get restatedeployments.restate.dev --all-namespaces
+kubectl get restatecloudenvironments.restate.dev --all-namespaces
+
+kubectl delete crd \
+  restateclusters.restate.dev \
+  restatedeployments.restate.dev \
+  restatecloudenvironments.restate.dev
+
+kubectl delete namespace restate-apps restate-operator
+kubectl delete storageclass restate-gp3
+```
+
+Do not delete a CRD merely because this installation is gone. CRDs are
+cluster-wide, Helm annotates these with `helm.sh/resource-policy: keep`, and
+deleting one also deletes every remaining custom resource of that kind. If
+another operator installation or CR exists, leave all three definitions in
+place and record the shared ownership.
 
 This order was executed end to end on a live three-node cluster on 2026-09-01.
 Steps 2 and 3 behaved as documented: the `RestateDeployment` finalizer drained
@@ -485,21 +539,23 @@ its revision and removed the ReplicaSet, Services, and pods, leaving
 `restate-apps` empty; deleting the `RestateCluster` then removed the namespace
 and PVCs while all three PVs became `Released` with their EBS volumes intact.
 
-For Terraform-specific ordering and the OIDC state escape hatch, follow
+For Terraform, do not run the manual deletion commands for resources still in
+state. Follow the ownership decisions, saved destroy plans, and post-destroy CRD
+cleanup in
 [Terraform: Destroy](../terraform/README.md#destroy).
 
 ### What a completed teardown leaves behind
 
-Every step above can succeed and still leave billable AWS resources. Deleting
-the `RestateCluster`, its namespace and PVCs, the CRDs, the operator release,
-and the StorageClass removes nothing on this list — verified by doing exactly
-that:
+Even after the complete Kubernetes cleanup above, billable AWS resources can
+remain. Deleting the `RestateCluster`, its namespace and PVCs, the CRDs, the
+operator release, and the StorageClass removes nothing on this list—verified by
+doing exactly that on the manual path:
 
 | Survives | Why | Removing it |
 |---|---|---|
 | 3 × EBS volumes behind `Released` PVs | `reclaimPolicy: Retain`, working as intended | Explicit `aws ec2 delete-volume` per volume |
-| Snapshot bucket and its objects | Dedicated bucket, no lifecycle rule | Empty it, then delete the bucket |
-| Snapshots IAM role and policy | Not owned by any Kubernetes object | Detach and delete, or leave for reuse |
+| Snapshot bucket and its objects | Dedicated bucket, no lifecycle rule | Use the tool that owns it; empty it only after an explicit retention decision |
+| Snapshots IAM role and policy | Manual path: eksctl/CloudFormation plus IAM policy; Terraform path: stage-01 state unless transferred | Remove through the owning delivery tool, or transfer ownership explicitly |
 | IAM OIDC provider | Cluster-wide, shared by every IRSA role | Keep unless the EKS cluster is going too |
 | The EKS cluster itself | This repository never creates it | Your cluster provisioning tool |
 

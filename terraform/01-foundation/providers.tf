@@ -7,6 +7,13 @@ provider "aws" {
 # lookup.
 data "aws_eks_cluster" "this" {
   name = var.cluster_name
+
+  lifecycle {
+    postcondition {
+      condition     = try(self.kubernetes_network_config[0].ip_family, "") == "ipv4"
+      error_message = "This reference currently supports IPv4 EKS clusters only; the target cluster does not report ipFamily=ipv4."
+    }
+  }
 }
 
 # Exec auth (`aws eks get-token`) instead of a aws_eks_cluster_auth token:

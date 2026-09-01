@@ -21,13 +21,16 @@
 # create_service_cidr_egress_policy = false to skip it.
 locals {
   # data.aws_eks_cluster is already declared in providers.tf for exec auth.
-  service_ipv4_cidr = data.aws_eks_cluster.this.kubernetes_network_config[0].service_ipv4_cidr
+  # The data-source postcondition rejects IPv6 clusters. Keep a syntactically
+  # valid fallback so expression evaluation can still reach that clear error
+  # instead of failing inside replace() on a null IPv4 CIDR.
+  service_ipv4_cidr = try(data.aws_eks_cluster.this.kubernetes_network_config[0].service_ipv4_cidr, null)
 
   service_cidr_egress_manifest = yamldecode(
     replace(
       file("${path.module}/../../resources/06-restate-service-cidr-egress.yaml"),
       "REPLACE_ME_SERVICE_CIDR",
-      local.service_ipv4_cidr,
+      local.service_ipv4_cidr != null ? local.service_ipv4_cidr : "0.0.0.0/32",
     )
   )
 }

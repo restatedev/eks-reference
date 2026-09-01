@@ -55,9 +55,9 @@ intentional.
   and the **operator** provisions the cluster
   (`spec.cluster.autoProvision: true` + `auto-provision = false` in the
   TOML) — see [Architecture](00-architecture.md#cluster-bootstrap-sequence).
-- IAM: cloud uses operator-managed EKS Pod Identity (needs the ACK EKS
-  controller); this repo defaults to IRSA, with the Pod Identity path
-  documented as the alternative.
+- IAM: cloud uses operator-managed EKS Pod Identity; this repo implements IRSA.
+  The adaptation requirements for Pod Identity are documented, but the supplied
+  IAM and Terraform paths do not automate them.
 - StorageClass: cloud's gp3 class is `encrypted` + `xfs` at baseline gp3
   performance (3000 IOPS / 125 MiB/s) with `reclaimPolicy: Delete`; this repo
   keeps encryption and xfs but provisions 6000 IOPS / 500 MiB/s up front and

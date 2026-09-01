@@ -7,7 +7,8 @@ with `tofu` in the examples when using OpenTofu.
 Before continuing, complete the repository's
 [prerequisite checklist](../docs/01-prerequisites.md#deployment-checklist). These
 modules do not create an EKS cluster, VPC, worker nodes, cluster access, or CNI
-NetworkPolicy enforcement.
+NetworkPolicy enforcement. They currently support IPv4 EKS clusters only and
+fail planning with a clear error when the target reports another IP family.
 
 ## What Terraform manages
 
@@ -19,7 +20,7 @@ NetworkPolicy enforcement.
   ├─ restate-operator and restate-apps namespaces
   ├─ restate-apps NetworkPolicy
   ├─ restate-gp3 StorageClass
-  └─ Restate operator Helm release and CRDs
+  └─ Restate operator Helm release and CRDs (CRDs are retained on uninstall)
 
 02-restate
   ├─ RestateCluster/restate
@@ -27,6 +28,11 @@ NetworkPolicy enforcement.
 ```
 
 The two stages have separate state and must be applied in order.
+
+The chart installs and upgrades its CRDs, but annotates them with
+`helm.sh/resource-policy: keep`. Destroying the Helm release therefore leaves
+all three definitions in the cluster until the explicit, dependency-checked
+cleanup in [Destroy](#destroy).
 
 ## Why there are two stages
 
@@ -85,8 +91,8 @@ The identity still needs access on both planes:
 - AWS: `eks:DescribeCluster` plus the required S3, IAM, and OIDC read/write
   operations;
 - Kubernetes: API endpoint reachability and authorization to manage namespaces,
-  a cluster-scoped StorageClass, NetworkPolicies, the Helm release, and Restate
-  custom resources.
+  cluster-scoped StorageClasses, CRDs and RBAC, NetworkPolicies, the Helm
+  release, and Restate custom resources.
 
 Passing `aws sts get-caller-identity` proves authentication only. It does not
 prove EKS access or Kubernetes RBAC.
@@ -138,6 +144,11 @@ it always matches the cluster being applied to. On a CNI that evaluates after
 DNAT (Calico, Cilium) the policy is unnecessary rather than harmful, and
 `create_service_cidr_egress_policy = false` skips it.
 
+This is also the reason IPv4 is an explicit support boundary. An IPv6 EKS
+cluster reports `serviceIpv6Cidr` instead, and this reference has not validated
+the operator policies, Pod Identity agent path, or VPC CNI IPv6 behavior as one
+system. Both stages reject a non-IPv4 target rather than partially applying it.
+
 The policy lives in the operator-owned namespace, so destroying the
 `RestateCluster` removes it too. Its full rationale and the exact scope of the
 allowance are in the manifest's header.
@@ -183,7 +194,10 @@ Confirm the operator and CRDs before proceeding:
 
 ```bash
 kubectl -n restate-operator get deployment,pods
-kubectl get crd restateclusters.restate.dev restatedeployments.restate.dev
+kubectl get crd \
+  restateclusters.restate.dev \
+  restatedeployments.restate.dev \
+  restatecloudenvironments.restate.dev
 ```
 
 ### 2. Initialize and plan stage 02
@@ -331,54 +345,142 @@ the Restate cluster, PVs, snapshot bucket, or cluster OIDC provider.
 | Snapshot role lookup fails | Stage 01 was not applied with the same `cluster_name` |
 | Restate pods stay Pending | Capacity, anti-affinity, taint, EBS CSI, or Availability Zone issue |
 | Stage 02 times out waiting for Ready | Inspect the RestateCluster, pods, and operator logs; see the Operations guide |
+| EKS lookup reports that `ipFamily` is not `ipv4` | This reference currently supports IPv4 EKS clusters only; use a validated IPv4 target rather than bypassing the guard |
 
 ## Destroy
 
-Destroy in reverse stage order:
+Teardown has three separate decisions: drain applications, destroy the Restate
+cluster, then decide which stage-01 AWS resources transfer to another owner and
+which are actually deleted. Do not start with an unconditional stage-01
+destroy.
+
+Before planning either stage:
+
+- stop new traffic and create and verify a current snapshot;
+- delete SDK services and let every revision drain—Terraform does not manage
+  `RestateDeployment`s or wait for their finalizers;
+- record the PV/PVC/AZ/EBS volume mapping before deleting the cluster;
+- capture the bucket name while the stage-01 output still exists.
+
+```bash
+kubectl -n restate-apps delete restatedeployment --all \
+  --wait=true --timeout=15m
+kubectl -n restate get pvc -o wide
+kubectl get pv \
+  -o custom-columns='PV:.metadata.name,CLAIM-NS:.spec.claimRef.namespace,CLAIM:.spec.claimRef.name,VOLUME:.spec.csi.volumeHandle,ZONE:.metadata.labels.topology\.kubernetes\.io/zone'
+BUCKET="$(terraform -chdir=terraform/01-foundation output -raw snapshots_bucket)"
+```
+
+If service deletion times out, inspect the pinned invocations and continue
+waiting; do not remove the finalizer or destroy the cluster underneath them.
+
+### 1. Destroy stage 02
+
+Create and apply one saved, reviewed destroy plan:
 
 ```bash
 terraform -chdir=terraform/02-restate plan \
-  -destroy -var-file=../terraform.tfvars
-terraform -chdir=terraform/02-restate destroy \
-  -var-file=../terraform.tfvars
-
-terraform -chdir=terraform/01-foundation plan \
-  -destroy -var-file=../terraform.tfvars
-terraform -chdir=terraform/01-foundation destroy \
-  -var-file=../terraform.tfvars
+  -destroy -var-file=../terraform.tfvars \
+  -out=restate-destroy.tfplan
+terraform -chdir=terraform/02-restate apply restate-destroy.tfplan
 ```
 
-Before confirming either destroy:
-
-- stop new traffic and verify a current snapshot;
-- delete your SDK services first, and let their revisions drain: Terraform does
-  not manage `RestateDeployment`s, so it will not wait for them, and deleting
-  the cluster from under a service leaves invocations with nowhere to go;
-- understand that deleting `RestateCluster/restate` deletes the operator-owned
-  namespace and PVCs;
-- record the PV-to-EBS volume mapping; the `Retain` policy preserves the PVs but
-  does not reattach them automatically;
-- expect the non-empty S3 bucket to refuse deletion because `force_destroy` is
-  false. That is deliberate, and the remedy is a decision rather than a flag:
-  either keep the snapshots and `state rm` the bucket, or empty it explicitly
-  with `aws s3 rm "s3://$BUCKET" --recursive` and destroy again.
-
-A successful destroy of both stages still leaves the retained EBS volumes, the
-snapshot bucket, the IAM role and policy, and the OIDC provider. The full
-inventory, and why the volume mapping has to be captured before the EKS cluster
-goes away, is in
-[what a completed teardown leaves behind](../docs/05-operations.md#what-a-completed-teardown-leaves-behind).
-
-If stage 01 created the IAM OIDC provider, destroying it breaks every IRSA role
-that trusts that cluster issuer, including unrelated workloads. When the EKS
-cluster is staying, preserve the provider before stage-01 destroy:
+This deletes `RestateCluster/restate`, its namespace, and its PVCs. Confirm the
+PVs are `Released` and record their EBS handles again before proceeding:
 
 ```bash
+kubectl get pv \
+  -o custom-columns='PV:.metadata.name,STATUS:.status.phase,VOLUME:.spec.csi.volumeHandle,SIZE:.spec.capacity.storage'
+```
+
+### 2. Decide stage-01 ownership before planning its destroy
+
+Stage 01 may own a cluster-wide OIDC provider. If
+`create_oidc_provider = true` and the EKS cluster is staying, transfer it out of
+this state **before** the destroy plan. Otherwise Terraform will delete it and
+break every IRSA role that trusts the issuer, including unrelated workloads:
+
+```bash
+terraform -chdir=terraform/01-foundation state list \
+  | grep '^aws_iam_openid_connect_provider\.this'
+
 terraform -chdir=terraform/01-foundation state rm \
   'aws_iam_openid_connect_provider.this[0]'
 ```
 
-Removing a resource from state transfers responsibility; it does not delete
-the AWS provider. Record that ownership decision. The broader teardown and data
-safety checklist is in
-[Operations and troubleshooting](../docs/05-operations.md#teardown-checklist).
+When `create_oidc_provider = false`, the provider is only a data source and
+there is no managed OIDC resource to remove from state.
+
+Choose one bucket outcome:
+
+- **Keep the bucket and snapshots.** Transfer the bucket and both of its
+  security controls together. Removing only the bucket from state would let the
+  destroy remove the public-access block and HTTPS-only policy from the retained
+  data.
+
+  ```bash
+  terraform -chdir=terraform/01-foundation state rm \
+    aws_s3_bucket_policy.snapshots \
+    aws_s3_bucket_public_access_block.snapshots \
+    aws_s3_bucket.snapshots
+  ```
+
+- **Delete the bucket and snapshots.** This is irreversible. Empty it only
+  after an explicit data-retention decision; `force_destroy` is false, so a
+  non-empty bucket correctly makes the later apply fail.
+
+  ```bash
+  aws s3 rm "s3://$BUCKET" --recursive
+  ```
+
+The snapshot IAM role and policy are separate from the bucket decision. Stage
+01 deletes them by default. To preserve them for an intentional reuse, transfer
+all three state objects together. The policy remains scoped to this exact
+bucket, so retain the bucket too or update the policy before reusing the role:
+
+```bash
+terraform -chdir=terraform/01-foundation state rm \
+  aws_iam_role_policy_attachment.snapshots \
+  aws_iam_role.snapshots \
+  aws_iam_policy.snapshots
+```
+
+Removing an object from state transfers responsibility; it does not delete or
+continue managing the AWS object. Record the new owner for every transfer.
+
+### 3. Destroy stage 01
+
+Only after those decisions, create and apply the saved stage-01 destroy plan:
+
+```bash
+terraform -chdir=terraform/01-foundation plan \
+  -destroy -var-file=../terraform.tfvars \
+  -out=foundation-destroy.tfplan
+terraform -chdir=terraform/01-foundation apply foundation-destroy.tfplan
+```
+
+The Helm chart deliberately retains its three CRDs on uninstall. After proving
+that no other operator installation or custom resource relies on them, remove
+them explicitly:
+
+```bash
+kubectl get deployments --all-namespaces \
+  -l app.kubernetes.io/name=restate-operator
+kubectl get restateclusters.restate.dev
+kubectl get restatedeployments.restate.dev --all-namespaces
+kubectl get restatecloudenvironments.restate.dev --all-namespaces
+
+kubectl delete crd \
+  restateclusters.restate.dev \
+  restatedeployments.restate.dev \
+  restatecloudenvironments.restate.dev
+```
+
+A successful destroy always leaves the EKS cluster and the EBS volumes retained
+by the former PVs. The bucket, snapshot IAM role/policy, and a Terraform-created
+OIDC provider survive **only** when explicitly removed from state as above;
+otherwise Terraform deletes them when possible. The CRDs survive until the
+explicit post-destroy cleanup. See the
+[full retained-resource inventory](../docs/05-operations.md#what-a-completed-teardown-leaves-behind)
+and the broader
+[data-safety checklist](../docs/05-operations.md#teardown-checklist).

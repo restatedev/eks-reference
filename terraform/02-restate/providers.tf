@@ -9,6 +9,13 @@ provider "aws" {
 
 data "aws_eks_cluster" "this" {
   name = var.cluster_name
+
+  lifecycle {
+    postcondition {
+      condition     = try(self.kubernetes_network_config[0].ip_family, "") == "ipv4"
+      error_message = "This reference currently supports IPv4 EKS clusters only; the target cluster does not report ipFamily=ipv4."
+    }
+  }
 }
 
 # Exec auth for the same reason as stage 01: the RestateCluster wait

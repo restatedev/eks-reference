@@ -66,6 +66,7 @@ an entire layer below it.
 | Snapshot bucket and Restate IAM role | Operator/platform team or Terraform stage 01 | Bucket is dedicated to one Restate cluster |
 | `restate-operator` namespace | This repository / Terraform stage 01 | Contains the operator Helm release |
 | `restate-apps` namespace | This repository / Terraform stage 01 | Contains user SDK service revisions |
+| Restate CRDs | Operator Helm release / Terraform stage 01 | Annotated to survive Helm uninstall; delete only after a cluster-wide dependency check |
 | `restate` namespace | Restate operator | Created and deleted with `RestateCluster/restate` |
 | StatefulSet, Services, ServiceAccount, cluster policies | Restate operator | Reconciled from the `RestateCluster` spec |
 | PVCs | Restate operator through the StatefulSet | Deleted with the operator-owned namespace |
@@ -139,7 +140,10 @@ not expressible in the `RestateCluster` CRD, which has no egress peer field. So
 this reference owns a third policy for it,
 `resources/06-restate-service-cidr-egress.yaml`, which allows the Restate pods
 TCP 9080 into the Service CIDR. Calico and Cilium evaluate after DNAT and do not
-need it.
+need it. Because NetworkPolicy rules are additive, that stable CIDR allowance
+can also reach any other ClusterIP backend on port 9080 unless the destination
+pod has its own ingress policy; the repository-owned `restate-apps` policy is
+the destination-side restriction for the example SDK namespace.
 
 ### CNI enforcement
 
@@ -209,9 +213,11 @@ equivalent `RESTATE_AUTO_PROVISION=false` environment setting. No node can race
 the operator to initialize cluster state.
 
 The operator treats “already provisioned” as success and caches the outcome in
-`status.provisioned`, so it performs the initialization at most once per
-cluster. The manual fallback, `restatectl provision --yes`, is therefore safe
-to retry.
+`status.provisioned`. Do not run `restatectl provision` while
+`spec.cluster.autoProvision` is enabled: a manual call can race the operator,
+and operator 3.0.1 explicitly warns that concurrent provisioning methods can
+split the cluster. Diagnose the controller call instead of introducing a
+second provisioner.
 
 Restate Cloud's startup wrapper instead lets only pod 0 self-provision on first
 boot. Operator-managed provisioning was chosen here so initialization is
@@ -271,12 +277,24 @@ The default credential path is IRSA:
 4. the operator-created ServiceAccount receives the role ARN annotation;
 5. the AWS SDK in Restate exchanges its projected token through STS.
 
-The alternative is operator-managed EKS Pod Identity, matching Restate Cloud.
-It requires the
-[ACK EKS controller](https://github.com/aws-controllers-k8s/eks-controller),
-the operator Helm value `awsPodIdentityAssociationCluster`, and
-`security.awsPodIdentityAssociationRoleArn`. That field also causes the
-operator to allow egress to the pod-identity agent at `169.254.170.23:80`.
+The operator can also create an EKS Pod Identity association, matching Restate
+Cloud, but this repository does not automate that IAM path. Adapting the
+reference requires all of the following:
+
+1. the EKS Pod Identity Agent running on every eligible node;
+2. the
+   [ACK EKS controller](https://github.com/aws-controllers-k8s/eks-controller)
+   and its CRDs;
+3. an IAM role whose trust grants `sts:AssumeRole` and `sts:TagSession` to the
+   `pods.eks.amazonaws.com` service principal;
+4. the operator Helm value `awsPodIdentityAssociationCluster`;
+5. `security.awsPodIdentityAssociationRoleArn` instead of the IRSA ServiceAccount
+   annotation.
+
+Do not reuse the IRSA-only role created by this repository without changing its
+trust policy: `sts:AssumeRoleWithWebIdentity` against the cluster OIDC issuer is
+not a Pod Identity trust. The Pod Identity field also causes the operator to
+allow egress to the agent at `169.254.170.23:80`.
 
 ## SDK service revision lifecycle
 

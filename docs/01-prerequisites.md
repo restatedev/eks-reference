@@ -8,10 +8,12 @@ or cluster access for you.
 
 - [ ] The target EKS cluster and API endpoint are reachable from the machine
       running the deployment.
-- [ ] At least three eligible nodes each have 24 allocatable vCPU and 50 GiB
-      allocatable memory.
+- [ ] At least three eligible nodes each have 24 vCPU and 50 GiB memory
+      available for new pod requests after existing workload requests.
 - [ ] The EBS CSI driver is installed and healthy.
 - [ ] Restate data will use persistent EBS, not instance-store volumes.
+- [ ] The EKS cluster uses the IPv4 IP family; this reference does not support
+      IPv6 clusters.
 - [ ] The NetworkPolicy enforcement choice and its security consequence are
       understood.
 - [ ] Where NetworkPolicy is enforced, the cluster's Service IPv4 CIDR is
@@ -22,7 +24,9 @@ or cluster access for you.
       resources and install the operator.
 - [ ] An IAM OIDC provider exists for the EKS cluster, or the chosen path will
       create it.
-- [ ] A unique, dedicated snapshot bucket name has been chosen.
+- [ ] For the manual path, a unique, dedicated snapshot bucket already exists
+      in the target region with public access blocked and HTTPS-only access
+      enforced; for Terraform, a globally unique name has been chosen.
 - [ ] The EKS cluster name is at most 46 characters so the derived snapshot
       role name stays within IAM's 64-character limit.
 - [ ] The required tools for one deployment path are installed.
@@ -43,8 +47,11 @@ Confirm that the identity and target cluster are the ones you intend to use:
 ```bash
 aws sts get-caller-identity
 aws eks describe-cluster --name "$CLUSTER" --region "$REGION" \
-  --query 'cluster.{name:name,status:status,version:version,endpoint:endpoint}'
+  --query 'cluster.{name:name,status:status,version:version,ipFamily:kubernetesNetworkConfig.ipFamily,endpoint:endpoint}'
 ```
+
+Stop if `ipFamily` is not `ipv4`. Both deployment paths rely on the cluster's
+`serviceIpv4Cidr` for the EKS VPC CNI egress policy.
 
 ## EKS capacity
 
@@ -55,8 +62,8 @@ eligible nodes.
 | Requirement | Why |
 |---|---|
 | 3 eligible nodes | Hard anti-affinity allows one Restate pod per node |
-| ≥24 allocatable vCPU per node | Matches the pod request |
-| ≥50 GiB allocatable memory per node | Matches the request and memory limit |
+| ≥24 vCPU available for new requests per node | Matches the pod request after existing pod requests |
+| ≥50 GiB available for new requests per node | Matches the request and memory limit after existing pod requests |
 | Prefer 3 Availability Zones | Reduces correlated node/AZ failure risk |
 | Persistent EBS support | Restate data must survive node replacement |
 
@@ -71,12 +78,24 @@ sidecar, or any other per-node workload will share them.
 Instance types with local NVMe (`*d`) must not be used as a substitute for the
 persistent EBS volumes.
 
-Inspect current allocatable capacity and placement labels:
+Inspect total allocatable capacity and placement labels:
 
 ```bash
 kubectl get nodes -L topology.kubernetes.io/zone \
   -o custom-columns='NAME:.metadata.name,CPU:.status.allocatable.cpu,MEMORY:.status.allocatable.memory,ZONE:.metadata.labels.topology\.kubernetes\.io/zone'
 ```
+
+Allocatable is a ceiling, not free scheduler capacity. Existing pod requests,
+including DaemonSets, are deducted before Restate can schedule. For each
+candidate node, inspect the `Allocated resources` section and confirm at least
+24 CPU and 50 GiB remain after the listed requests:
+
+```bash
+kubectl describe node <candidate-node>
+```
+
+Do not substitute `kubectl top`: current usage is not what the scheduler uses
+for placement.
 
 With Karpenter, prevent instance-store-backed Restate nodes by requiring:
 
@@ -166,6 +185,22 @@ The manual path expects the bucket to exist already with:
 - default SSE-S3 encryption (AWS enables this for new objects);
 - no bucket lifecycle rule deleting live snapshot objects.
 
+Verify the pre-existing manual-path bucket rather than assuming its controls:
+
+```bash
+aws s3api head-bucket --bucket "$BUCKET"
+aws s3api get-bucket-location --bucket "$BUCKET"
+aws s3api get-public-access-block --bucket "$BUCKET"
+aws s3api get-bucket-policy --bucket "$BUCKET" \
+  --query Policy --output text | jq
+aws s3api get-bucket-encryption --bucket "$BUCKET"
+```
+
+The policy must contain an explicit `Deny` for requests where
+`aws:SecureTransport` is `false`; a `null` location means `us-east-1`, otherwise
+the returned location must match `$REGION`. Do not point the deployment at an
+existing general-purpose bucket merely because it is reachable.
+
 The Terraform path creates those bucket controls and leaves `force_destroy`
 disabled.
 
@@ -174,6 +209,7 @@ disabled.
 The deploying identity needs enough AWS permission to:
 
 - read the EKS cluster and its OIDC issuer;
+- inspect the manual-path bucket controls and list its snapshot objects;
 - create or read the IAM OIDC provider;
 - create the cluster-qualified snapshot policy and role;
 - attach the policy to the role;
@@ -197,6 +233,8 @@ must have an EKS access entry or `aws-auth` mapping with permission to manage:
 
 - namespaces;
 - cluster-scoped StorageClasses;
+- CustomResourceDefinitions, ClusterRoles, and ClusterRoleBindings installed by
+  the operator chart;
 - NetworkPolicies;
 - Helm releases, Deployments, and related namespaced resources;
 - `RestateCluster` and `RestateDeployment` custom resources after the CRDs are
@@ -210,9 +248,12 @@ kubectl cluster-info
 kubectl auth can-i create namespaces
 kubectl auth can-i create storageclasses.storage.k8s.io
 kubectl auth can-i create networkpolicies.networking.k8s.io --all-namespaces
+kubectl auth can-i create customresourcedefinitions.apiextensions.k8s.io
+kubectl auth can-i create clusterroles.rbac.authorization.k8s.io
+kubectl auth can-i create clusterrolebindings.rbac.authorization.k8s.io
 ```
 
-All three authorization checks should return `yes` for the manual path. The
+All six authorization checks should return `yes` for the manual path. The
 Terraform path uses `aws eks get-token` directly, but needs equivalent access.
 
 ## OCI chart registry access
@@ -272,7 +313,7 @@ Choose one path; you do not need every tool in both columns.
 | Helm | ✓ | optional* | Install the operator manually; verify or authenticate the OCI chart pull |
 | Terraform ≥1.5 or OpenTofu | — | ✓ | Apply the two Terraform stages |
 | `jq` | ✓ | recommended | Format API responses |
-| `restatectl` | via pod | via pod | Cluster status, provisioning, snapshots |
+| `restatectl` | via pod | via pod | Cluster status and snapshots; provisioning remains operator-managed |
 | `restate` CLI | optional | optional | Service/deployment administration |
 
 `*` The Terraform Helm provider installs the release itself, so the Terraform
@@ -309,7 +350,7 @@ grep -RIn 'REPLACE_ME' resources
 | `REPLACE_ME_SNAPSHOTS_ROLE_ARN` | `04-restate-cluster.yaml` | `arn:aws:iam::<account>:role/<cluster>-restate-snapshots` |
 | `REPLACE_ME_SERVICE_IMAGE` | `05-restate-compute.yaml` | SDK service image; apply compute only after setting it |
 | `REPLACE_ME_SERVICE_CIDR` | `06-restate-service-cidr-egress.yaml` | Cluster Service IPv4 CIDR; needed where the CNI enforces NetworkPolicy |
-| `REPLACE_ME_EKS_CLUSTER_NAME` | `02-restate-operator.values.yaml` (commented) | Only for the EKS Pod Identity alternative |
+| `REPLACE_ME_EKS_CLUSTER_NAME` | `02-restate-operator.values.yaml` (commented) | Only when adapting the repository for EKS Pod Identity; the supplied IAM paths implement IRSA only |
 
 The Terraform path does not modify the files. It replaces the required values
 in memory from `terraform.tfvars`.

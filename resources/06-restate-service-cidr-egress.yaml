@@ -34,9 +34,11 @@
 # restate-apps". A per-service allowance is not durable — a ClusterIP is
 # assigned at Service creation and changes whenever the Service is recreated,
 # and the operator creates one Service per revision — so the Service CIDR is the
-# narrowest stable form. It grants reachability to a VIP on one port, not to any
-# additional pod: the operator's pod-label rules still decide which pods may be
-# reached.
+# narrowest stable form. Because NetworkPolicies are additive, this rule also
+# permits Restate to reach the backend of any other ClusterIP on port 9080
+# unless that destination pod has its own ingress policy. The repository-owned
+# ingress policy in `restate-apps` provides that destination-side restriction
+# for the example SDK namespace.
 #
 # The podSelector deliberately names the Restate pods rather than using `{}`.
 # Those pods already carry operator-managed egress policies, so this file only

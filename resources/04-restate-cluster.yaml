@@ -298,8 +298,9 @@ spec:
   # Server config. The cloud profile sets default-num-partitions (48) and
   # default-replication ({node: 2} for 3 replicas) via env vars; folded into
   # the TOML here for readability — same effective config. These defaults are
-  # also what provisioning adopts: the operator's ProvisionCluster call and a
-  # bare `restatectl provision` both send no explicit parameters.
+  # also what provisioning adopts: the operator's ProvisionCluster call sends
+  # no explicit parameters. Do not run `restatectl provision` concurrently;
+  # operator-managed and manual provisioning may race and split the cluster.
   config: |
     roles = [
         "worker",
@@ -339,14 +340,13 @@ spec:
     # role creation: docs/02-runbook.md step 2). STS is reached via public IPs,
     # which the operator's default egress NetworkPolicy already allows.
     #
-    # Alternative (what Restate Cloud itself uses): EKS Pod Identity managed
-    # by the operator — requires the ACK EKS controller plus the operator helm
-    # value `awsPodIdentityAssociationCluster` (commented out in
-    # resources/02-restate-operator.values.yaml); then replace the annotation
-    # with:
-    #   awsPodIdentityAssociationRoleArn: REPLACE_ME_SNAPSHOTS_ROLE_ARN
-    # (that field also opens the NetworkPolicy egress to the pod-identity
-    # agent at 169.254.170.23, which IRSA doesn't need).
+    # Alternative (what Restate Cloud itself uses): EKS Pod Identity managed by
+    # the operator. This repository does not automate that IAM path. It needs
+    # the Pod Identity Agent, the ACK EKS controller, the operator Helm value
+    # `awsPodIdentityAssociationCluster`, and a DIFFERENT role trust granting
+    # sts:AssumeRole + sts:TagSession to pods.eks.amazonaws.com. Do not point
+    # `awsPodIdentityAssociationRoleArn` at the IRSA-only role below without
+    # changing its trust. See docs/00-architecture.md#iam-for-snapshots.
     serviceAccountAnnotations:
       # e.g. arn:aws:iam::<account>:role/<eks-cluster>-restate-snapshots,
       # created in docs/02-runbook.md step 2

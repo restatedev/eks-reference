@@ -1,0 +1,22 @@
+name: Repository validation
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+      - uses: opentofu/setup-opentofu@v2
+        with:
+          tofu_version: "1.12.6"
+          tofu_wrapper: false
+      - run: ./scripts/validate.sh

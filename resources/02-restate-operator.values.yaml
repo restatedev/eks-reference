@@ -16,7 +16,9 @@
 # CRDs out of band.
 installCrds: true
 
-# Only needed for the EKS Pod Identity alternative described in
-# docs/00-architecture.md (requires the ACK EKS controller in the cluster).
-# Leave unset for the default IRSA path used by 04-restate-cluster.yaml.
+# Only needed when adapting this reference for EKS Pod Identity, as described in
+# docs/00-architecture.md. That path also requires the EKS Pod Identity Agent,
+# the ACK EKS controller, and a role trusted by pods.eks.amazonaws.com; the
+# supplied Terraform and runbook IAM paths create an IRSA-only role and do not
+# automate those prerequisites. Leave unset for the default IRSA path.
 # awsPodIdentityAssociationCluster: REPLACE_ME_EKS_CLUSTER_NAME

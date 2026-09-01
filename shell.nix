@@ -16,11 +16,6 @@ with pkgs; pkgs.mkShell {
     opentofu
 
     jq
-
-    # for the test program
-    nodejs
-    pnpm
-    biome
-    typescript-language-server
+    ruby # repository YAML/JSON and documentation-link checks
   ];
 }

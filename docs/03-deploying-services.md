@@ -201,9 +201,16 @@ external side effects. Application compatibility remains your responsibility.
 `spec.replicas` controls pods for the latest revision. Older active revisions
 keep the replica count they had when created so pinned work remains available.
 
-The operator can manage an HPA per revision through `spec.autoscaling`. Each
-HPA selects only its revision's pods; metrics from a draining version do not
-affect the latest version.
+`spec.autoscaling` does **not** autoscale the latest revision. In ReplicaSet
+mode, the operator uses that template to create one HPA for each non-latest
+revision that still has active invocations, allowing old capacity to shrink as
+work drains. It injects `scaleTargetRef`; provide the remaining HPA fields such
+as `minReplicas`, `maxReplicas`, and `metrics`. The minimum is floored at one.
+
+To autoscale the latest revision, create a separate application-owned HPA whose
+`scaleTargetRef` targets `restate.dev/v1beta1`, kind `RestateDeployment`, and
+this resource's name. Keep that HPA in the application pipeline, not in the
+cluster Terraform state.
 
 Test scaling behavior with real invocation load. The example request of 1 CPU
 and 1 GiB is a placeholder, not sizing guidance.
@@ -238,7 +245,7 @@ cleanup because it cannot query or drain through that cluster.
 | `spec.restate.drainDelaySeconds` | 300 | Delay between becoming inactive and scaling to zero |
 | `spec.revisionHistoryLimit` | 10 | Zero-scaled revisions retained for rollback |
 | `spec.minReadySeconds` | 0 | Minimum Ready time, matching native Deployment semantics |
-| `spec.autoscaling` | unset | Per-revision HPA configuration managed by the operator |
+| `spec.autoscaling` | unset | HPA template for active, non-latest draining revisions; it does not autoscale the latest revision |
 
 ## Troubleshooting
 
