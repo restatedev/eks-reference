@@ -72,8 +72,9 @@ The Terraform modules consume the files under `../resources/` directly:
 - the IAM policy JSON is loaded and its bucket placeholder replaced;
 - the operator receives the same Helm values file as the manual runbook.
 
-Do not maintain a second copy of a Kubernetes manifest in HCL. A change under
-`resources/` appears in the next plan of the stage that consumes it.
+Keep the files under `resources/` as the canonical Kubernetes manifests rather
+than maintaining a second copy in HCL. A change there appears in the next plan
+of the stage that consumes it.
 
 The cluster manifest intentionally uses nested `replace()` calls rather than
 `templatefile()`. `file()` leaves Kubernetes expressions such as
@@ -124,8 +125,8 @@ For a genuinely fresh cluster without a provider:
 create_oidc_provider = true
 ```
 
-Only enable creation after confirming the provider is absent. IAM refuses a
-second provider for the same issuer.
+Enable creation after confirming the provider is absent. IAM rejects a second
+provider for the same issuer.
 
 ## Operator chart registry access
 
@@ -343,8 +344,9 @@ Choose one approach:
 3. continue managing an existing manual installation through its original
    delivery system.
 
-Do not delete working resources just to get a clean Terraform apply, especially
-the Restate cluster, PVs, snapshot bucket, or cluster OIDC provider.
+Prefer importing existing resources or continuing with their current delivery
+system. Deleting working resources to obtain a clean Terraform apply can put
+the Restate cluster, PVs, snapshot bucket, or cluster OIDC provider at risk.
 
 ## Common failures
 
@@ -365,12 +367,12 @@ the Restate cluster, PVs, snapshot bucket, or cluster OIDC provider.
 
 Teardown has three separate decisions: drain applications, destroy the Restate
 cluster, then decide which stage-01 AWS resources transfer to another owner and
-which are actually deleted. Do not start with an unconditional stage-01
-destroy.
+which are actually deleted. Begin with those ownership decisions and reviewed
+plans rather than an unconditional stage-01 destroy.
 
 Before planning either stage:
 
-- stop new traffic and create and verify a current snapshot;
+- pause new traffic and create and verify a current snapshot;
 - delete SDK services and let every revision drain—Terraform does not manage
   `RestateDeployment`s or wait for their finalizers;
 - record the PV/PVC/AZ/EBS volume mapping before deleting the cluster;
@@ -386,7 +388,7 @@ BUCKET="$(terraform -chdir=terraform/01-foundation output -raw snapshots_bucket)
 ```
 
 If service deletion times out, inspect the pinned invocations and continue
-waiting; do not remove the finalizer or destroy the cluster underneath them.
+waiting; allow the finalizer to complete before destroying the cluster.
 
 ### 1. Destroy stage 02
 

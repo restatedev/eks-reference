@@ -9,8 +9,8 @@ If Restate itself is new to you, start with the
 return here.
 
 For a state-managed installation, use the [Terraform guide](../terraform/README.md)
-instead. Do not run both paths against the same resources unless you first
-import the manual resources into Terraform state.
+instead. Please use one path per installation. If you move a manual installation
+to Terraform, first import its resources into Terraform state.
 
 The installation creates AWS snapshot access, cluster-scoped Kubernetes
 resources, the Restate operator, and a three-node Restate cluster. It does not
@@ -56,7 +56,8 @@ kubectl config current-context
 kubectl cluster-info
 ```
 
-Stop if the account, cluster, or context is not the intended target.
+If the account, cluster, or context is not the intended target, pause here and
+correct it before continuing.
 
 ## Prepare the manifests
 
@@ -100,8 +101,8 @@ This creates:
 - the `restate-apps` ingress policy, allowing calls only from the future
   `restate` namespace.
 
-Do not create the `restate` namespace. The operator creates and owns it when
-the `RestateCluster` is applied.
+Leave the `restate` namespace for the operator to create and manage when the
+`RestateCluster` is applied.
 
 ## Step 2: Configure snapshot IAM
 
@@ -322,8 +323,8 @@ kubectl -n restate get policyendpoints
 
 ## Step 5: Prove snapshots work
 
-Do not wait for the automatic cadence: it needs both 100,000 records and five
-minutes. Trigger a snapshot and confirm objects reach the dedicated bucket:
+Trigger a snapshot directly and confirm objects reach the dedicated bucket.
+The automatic cadence requires both 100,000 records and five minutes:
 
 ```bash
 kubectl -n restate exec restate-0 -- \
@@ -332,8 +333,8 @@ aws s3 ls "s3://$BUCKET/restate/snapshots/" --recursive | head
 ```
 
 This checks the ServiceAccount annotation, OIDC trust, IAM policy, AWS region,
-network egress, bucket, and Restate snapshot configuration together. Do not
-continue to production use until it succeeds.
+network egress, bucket, and Restate snapshot configuration together. Confirm
+that it succeeds before continuing to production use.
 
 ## Step 6: Deploy an SDK service (optional)
 
@@ -374,8 +375,9 @@ curl localhost:8080/MyService/myHandler --json '{}'
 not expose ports 8080 or 9070.
 
 The port-forward tunnels through the kubelet and bypasses NetworkPolicy. This
-is the intended operator access path for the unauthenticated admin API. Never
-publish port 9070 directly.
+is the intended operator access path for the unauthenticated admin API. Keep
+port 9070 private unless it is protected by a suitable authentication and
+authorization layer.
 
 The same forward serves the Web UI at `http://localhost:9070/ui`. Keep 8080 in
 the command: the UI is served by the admin port, but its playground sends

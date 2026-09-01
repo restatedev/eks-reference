@@ -17,7 +17,7 @@ intentional. A customer performing a standard installation can skip it.
   against exactly this version; revisit them on any upgrade.
 - **Sizing**: 3 replicas × requests 24 CPU / 50 Gi. Limits are **memory-only on
   purpose** (the profile expresses "no CPU limit"): Restate may burst above 24
-  cores when the node has headroom. Don't add a CPU limit.
+  cores when the node has headroom. Leave the CPU limit unset.
 - **All tuning env vars**: rocksdb memory/log/perf/write-rate-cap,
   deletion-triggered partition-store compaction, bifrost record cache and read
   path, node-to-node stream window, ingress stream limit, invoker fan-out

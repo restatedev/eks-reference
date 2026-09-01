@@ -5,19 +5,19 @@ reference deployment those services run in namespace `restate-apps` as
 `RestateDeployment` custom resources rather than plain Kubernetes Deployments.
 
 This guide is an application/platform-team handoff. If your responsibility is
-only to install the Restate cluster, stop after the installation completion
-checklist and give this document to the team that owns the application image,
-configuration, scaling, and rollout. Do not apply the example while its image
-placeholder is still present.
+only to install the Restate cluster, the installation completion checklist is
+your handoff point; share this document with the team that owns the application
+image, configuration, scaling, and rollout. Apply the example after replacing
+its image placeholder.
 
 Start from `resources/05-restate-compute.yaml`, but treat it as a lifecycle
 example—not a complete production application template.
 
-Both deployment paths stop at the cluster. Neither the runbook nor the Terraform
-modules deploy your services: a service changes at your application's cadence,
-from your application's pipeline, and does not belong in the state that owns the
-cluster. Apply the manifest below with `kubectl`, or fold it into whatever
-already ships your applications.
+Both deployment paths finish with the Restate cluster installed. Neither the
+runbook nor the Terraform modules deploy your services: a service changes at
+your application's cadence, from your application's pipeline, and does not
+belong in the state that owns the cluster. Apply the manifest below with
+`kubectl`, or fold it into whatever already ships your applications.
 
 That is a boundary of the deployment paths, not of the operator. The operator
 installed in stage 01 reconciles `RestateDeployment` resources the same way it
@@ -143,9 +143,9 @@ A successful rollout means:
 - new invocations select it;
 - the old revision stays available for pinned invocations.
 
-Do not use `kubectl rollout restart` against the generated ReplicaSets or edit
-them directly. Change the `RestateDeployment` template and let the operator
-reconcile its children.
+Make rollout changes through the `RestateDeployment` template and let the
+operator reconcile its generated ReplicaSets. This preserves the revision
+lifecycle that a direct edit or `kubectl rollout restart` would bypass.
 
 ## Draining old revisions
 
@@ -181,8 +181,8 @@ restate deployment describe <deployment-id> --extra
 ```
 
 Pinned invocations must finish, be cancelled, or be killed through an explicit
-Restate operational decision before the revision can drain. Do not delete the
-ReplicaSet to force progress.
+Restate operational decision before the revision can drain. Allow that process
+to finish rather than deleting the ReplicaSet to force progress.
 
 ## Roll back
 

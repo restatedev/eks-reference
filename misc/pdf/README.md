@@ -28,9 +28,9 @@ Before changing the PDF, read the current versions of:
 - `resources/00-namespaces.yaml` through
   `resources/06-restate-service-cidr-egress.yaml`
 
-Do not copy a command or version from memory. Keep the PDF consistent with the
-checked-out repository, especially for image versions, chart versions, ports,
-resource names, sizing, IAM trust, NetworkPolicy behavior, and teardown order.
+Read commands and versions from the checked-out repository so the PDF stays
+consistent with its image versions, chart versions, ports, resource names,
+sizing, IAM trust, NetworkPolicy behavior, and teardown order.
 
 ## Build environment
 
@@ -78,8 +78,8 @@ python3 misc/pdf/build_manual_reference.py \
   --prepared "$(date '+%d %B %Y')"
 ```
 
-Use `--output <path>` only for a review copy. The committed customer artifact
-must retain the stable path under `output/pdf/`.
+Use `--output <path>` for a review copy. Keep the committed customer artifact
+at the stable path under `output/pdf/`.
 
 ## Required LLM workflow
 
@@ -143,15 +143,16 @@ geometry changes, update both the generator and this check deliberately.
 
 - Write for a customer cloud or platform engineer who understands AWS and EKS
   but may not know Restate.
-- Lead with outcomes, stop conditions, and evidence. Keep internal rationale
+- Lead with outcomes, readiness checks, and evidence. Keep internal rationale
   only where it changes an operator decision.
 - Separate the EKS cluster, Restate cluster, and optional SDK service clearly.
-- Keep port 9070 described as an unauthenticated admin boundary and never imply
-  that the operator-managed Service should be exposed publicly.
+- Keep port 9070 described as an unauthenticated admin boundary, and make clear
+  that the operator-managed Service is intended to remain private.
 - Preserve the distinction between retained EBS volumes and S3 snapshots;
   neither is an automatic disaster-recovery procedure.
 - Keep optional application deployment separate from infrastructure acceptance.
-- Do not add credentials, account identifiers, bucket names, or customer data.
+- Keep credentials, account identifiers, bucket names, and customer data out of
+  the artifact.
 - When the PDF and repository disagree, the checked-out repository wins.
 
 ## Final repository validation

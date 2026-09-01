@@ -41,7 +41,7 @@ spec:
       containers:
         - name: service
           # REPLACE_ME: the SDK service image (e.g. an ECR image built from
-          # this repo's node service). Port must be named "restate" — the
+          # this repo's node service). Keep the port name "restate" because the
           # operator uses it for the registration URL.
           image: REPLACE_ME_SERVICE_IMAGE
           ports:

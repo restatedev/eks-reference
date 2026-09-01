@@ -5,9 +5,9 @@
 # generic gp3 class, and StorageClass parameters are immutable — applying
 # this over an existing one fails (kubectl and Terraform alike). A scoped
 # name also keeps other workloads from adopting a class this stack owns and
-# may later delete. (Cloud names its class plain "gp3" — it owns its cells
-# end to end; a reference targeting shared clusters must not squat the
-# generic name.)
+# may later delete. (Cloud names its class plain "gp3" because it owns its cells
+# end to end; this reference uses a scoped name that is safer for shared
+# clusters.)
 #
 # `encrypted` and `xfs` match what Restate Cloud runs on EKS (cloud also turns
 # on account-wide EBS encryption-by-default, which a standalone cluster can't

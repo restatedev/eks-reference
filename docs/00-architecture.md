@@ -65,8 +65,8 @@ an entire layer below it.
 
 | Resource | Owner | Lifecycle consequence |
 |---|---|---|
-| Existing EKS cluster, VPC, nodes | Outside this repository | Never created or destroyed here |
-| IAM OIDC provider | Existing cluster by default; optionally Terraform stage 01 | Shared by IRSA workloads; do not delete casually |
+| Existing EKS cluster, VPC, nodes | Outside this repository | Left unchanged by this repository |
+| IAM OIDC provider | Existing cluster by default; optionally Terraform stage 01 | Shared by IRSA workloads; retain unless a dependency review confirms it is unused |
 | Snapshot bucket and Restate IAM role | Operator/platform team or Terraform stage 01 | Bucket is dedicated to one Restate cluster |
 | `restate-operator` namespace | This repository / Terraform stage 01 | Contains the operator Helm release |
 | `restate-apps` namespace | This repository / Terraform stage 01 | Contains user SDK service revisions |
@@ -76,8 +76,8 @@ an entire layer below it.
 | PVCs | Restate operator through the StatefulSet | Deleted with the operator-owned namespace |
 | EBS PVs | `restate-gp3` StorageClass / EBS CSI driver | Retained after PVC deletion; recovery is manual |
 
-Do not create the `restate` namespace yourself. The operator expects to own its
-full lifecycle.
+Leave the `restate` namespace for the operator to create and manage throughout
+its lifecycle.
 
 ## Traffic and trust boundaries
 
@@ -217,11 +217,11 @@ equivalent `RESTATE_AUTO_PROVISION=false` environment setting. No node can race
 the operator to initialize cluster state.
 
 The operator treats “already provisioned” as success and caches the outcome in
-`status.provisioned`. Do not run `restatectl provision` while
-`spec.cluster.autoProvision` is enabled: a manual call can race the operator,
-and operator 3.0.1 explicitly warns that concurrent provisioning methods can
-split the cluster. Diagnose the controller call instead of introducing a
-second provisioner.
+`status.provisioned`. Keep provisioning operator-managed while
+`spec.cluster.autoProvision` is enabled: a manual `restatectl provision` call
+can race the operator, and operator 3.0.1 explicitly warns that concurrent
+provisioning methods can split the cluster. Diagnose the controller call before
+changing the provisioning method.
 
 Restate Cloud's startup wrapper instead lets only pod 0 self-provision on first
 boot. Operator-managed provisioning was chosen here so initialization is
@@ -295,7 +295,7 @@ reference requires all of the following:
 5. `security.awsPodIdentityAssociationRoleArn` instead of the IRSA ServiceAccount
    annotation.
 
-Do not reuse the IRSA-only role created by this repository without changing its
+Adapting the repository's IRSA-only role for Pod Identity requires changing its
 trust policy: `sts:AssumeRoleWithWebIdentity` against the cluster OIDC issuer is
 not a Pod Identity trust. The Pod Identity field also causes the operator to
 allow egress to the agent at `169.254.170.23:80`.
@@ -308,8 +308,9 @@ and Service, registers that endpoint with Restate, and keeps the old revision
 alive while any invocation remains pinned to it.
 
 This is why the container port must be named `restate`, and why old ReplicaSets
-must not be deleted as ordinary rollout debris. The complete update, drain, and
-rollback workflow is in [Deploying services](03-deploying-services.md).
+need time to drain rather than being treated as ordinary rollout debris. The
+complete update, drain, and rollback workflow is in
+[Deploying services](03-deploying-services.md).
 
 ## Invariants to preserve
 
@@ -323,7 +324,8 @@ consumer together:
 - The IAM policy bucket and snapshot destination bucket must be identical.
 - The StorageClass name in `resources/03-gp3-storageclass.yaml` and
   `spec.storage.storageClassName` must match.
-- Port 9070 must not be exposed without an authentication boundary.
+- Keep port 9070 private unless a suitable authentication and authorization
+  boundary protects it.
 - Experimental runtime settings are pinned to Restate `1.7.7` and must be
   revalidated during an upgrade.
 

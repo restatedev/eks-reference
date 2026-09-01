@@ -14,8 +14,9 @@ and change control you apply to other cluster add-ons.
 
 ## Deployment checklist
 
-If any required item is unknown or fails its check below, stop before applying
-resources. The runbook and Terraform guide assume this checklist has passed.
+If a required item is unknown or does not meet its check below, please resolve
+it before applying resources. The runbook and Terraform guide assume this
+checklist has passed.
 
 - [ ] The target EKS cluster and API endpoint are reachable from the machine
       running the deployment.
@@ -61,8 +62,8 @@ aws eks describe-cluster --name "$CLUSTER" --region "$REGION" \
   --query 'cluster.{name:name,status:status,version:version,ipFamily:kubernetesNetworkConfig.ipFamily,endpoint:endpoint}'
 ```
 
-Stop if `ipFamily` is not `ipv4`. Both deployment paths rely on the cluster's
-`serviceIpv4Cidr` for the EKS VPC CNI egress policy.
+Please continue only when `ipFamily` is `ipv4`. Both deployment paths rely on
+the cluster's `serviceIpv4Cidr` for the EKS VPC CNI egress policy.
 
 ## EKS capacity
 
@@ -86,8 +87,8 @@ of memory headroom. That works, and it leaves little room for anything else on
 those nodes. Choose `m7i.8xlarge` if a log shipper, APM agent, service-mesh
 sidecar, or any other per-node workload will share them.
 
-Instance types with local NVMe (`*d`) must not be used as a substitute for the
-persistent EBS volumes.
+Use persistent EBS volumes for Restate data rather than local NVMe on `*d`
+instance types.
 
 Inspect total allocatable capacity and placement labels:
 
@@ -105,8 +106,8 @@ candidate node, inspect the `Allocated resources` section and confirm at least
 kubectl describe node <candidate-node>
 ```
 
-Do not substitute `kubectl top`: current usage is not what the scheduler uses
-for placement.
+Use the `Allocated resources` view above for this check. `kubectl top` reports
+current usage rather than the requests the scheduler uses for placement.
 
 With Karpenter, prevent instance-store-backed Restate nodes by requiring:
 
@@ -138,8 +139,8 @@ services. EKS VPC CNI NetworkPolicy enforcement is **off by default**.
 Running without enforcement is formally supported, but it changes the trust
 model completely: the policies are inert, every pod in the EKS cluster can
 reach the unauthenticated Restate admin API on port 9070, and every pod can call
-SDK endpoints on port 9080 directly. Only accept that on a single-tenant
-cluster where every workload is trusted with those capabilities.
+SDK endpoints on port 9080 directly. This configuration is appropriate only on
+a single-tenant cluster where every workload is trusted with those capabilities.
 
 Inspect the add-on configuration and API support:
 
@@ -155,7 +156,7 @@ NetworkPolicy objects alone does not prove enforcement.
 
 ### Enforcement requires one extra policy
 
-Turning enforcement on has a consequence the operator cannot handle for you.
+Turning enforcement on requires one additional policy in this deployment.
 The VPC CNI evaluates egress at the pod's veth, before kube-proxy rewrites a
 Service ClusterIP to a pod IP, so the operator's pod-label egress rule — which
 expands to pod IPs — does not cover the ClusterIP it registers each service
@@ -172,8 +173,9 @@ aws eks describe-cluster --name "$CLUSTER" --region "$REGION" \
   --query 'cluster.kubernetesNetworkConfig.serviceIpv4Cidr' --output text
 ```
 
-Do not assume a value. `eksctl` defaults to `10.100.0.0/16`, while clusters
-created without an explicit setting are often `172.20.0.0/16`.
+Read this value from EKS because it varies by cluster. `eksctl` defaults to
+`10.100.0.0/16`, while clusters created without an explicit setting are often
+`172.20.0.0/16`.
 
 ## AWS resources and permissions
 
@@ -186,8 +188,8 @@ path is always:
 s3://<bucket>/restate/snapshots/
 ```
 
-A snapshot repository belongs to one Restate cluster. Do not point two
-clusters at the same bucket/prefix.
+A snapshot repository belongs to one Restate cluster. Assign each cluster its
+own bucket and prefix.
 
 The manual path expects the bucket to exist already with:
 
@@ -209,8 +211,8 @@ aws s3api get-bucket-encryption --bucket "$BUCKET"
 
 The policy must contain an explicit `Deny` for requests where
 `aws:SecureTransport` is `false`; a `null` location means `us-east-1`, otherwise
-the returned location must match `$REGION`. Do not point the deployment at an
-existing general-purpose bucket merely because it is reachable.
+the returned location must match `$REGION`. Use the dedicated snapshot bucket
+for this deployment rather than an existing general-purpose bucket.
 
 The Terraform path creates those bucket controls and leaves `force_destroy`
 disabled.
@@ -294,7 +296,7 @@ decreasing order of likelihood:
 
    ```bash
    export GHCR_USERNAME=...       # GitHub username
-   export GHCR_TOKEN=...          # token with read:packages; do not commit it
+   export GHCR_TOKEN=...          # token with read:packages; keep it out of version control
    printf '%s' "$GHCR_TOKEN" | helm registry login ghcr.io \
      --username "$GHCR_USERNAME" --password-stdin
    ```

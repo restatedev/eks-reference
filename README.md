@@ -18,7 +18,7 @@ Keep these three layers separate while reading the guide:
 
 | Term | Meaning in this repository |
 |---|---|
-| EKS cluster | Existing AWS/Kubernetes infrastructure; never created here |
+| EKS cluster | Existing AWS/Kubernetes infrastructure; this repository leaves it unchanged |
 | Restate cluster | Three stateful Restate server pods installed into EKS |
 | SDK service | Customer application code that uses a Restate SDK; deployed separately |
 
@@ -62,8 +62,8 @@ to the application and networking owners.
 
 ## Before you deploy
 
-Treat these as deployment stop conditions. The prerequisite guide provides the
-commands that verify each one.
+Please confirm these readiness checks before deploying. The prerequisite guide
+provides the commands that verify each one.
 
 1. **Capacity:** you need at least three eligible nodes, each with 24 vCPU and
    50 GiB memory still available for new pod requests after existing system and
@@ -73,7 +73,7 @@ commands that verify each one.
    unauthenticated admin API on port 9070 and SDK endpoints on port 9080.
 3. **IP family:** this reference currently supports IPv4 EKS clusters only. Its
    Service-CIDR egress policy is derived from `serviceIpv4Cidr`.
-4. **Snapshots:** the S3 bucket must be dedicated to this Restate cluster. The
+4. **Snapshots:** use an S3 bucket dedicated to this Restate cluster. The
    snapshot prefix is not unique across installations.
 5. **Persistent data:** deleting the `RestateCluster` removes its namespace and
    PVCs. The StorageClass retains the underlying PVs, but recovery is a manual
@@ -92,11 +92,11 @@ The complete checklist and verification commands are in
 | AWS CLI + eksctl + Helm + kubectl | A guided install, reviewing each component, or integrating the manifests into another delivery system | [Manual runbook](docs/02-runbook.md) |
 | Terraform / OpenTofu | State-managed environments with repeatable, reviewable plans | [Terraform guide](terraform/README.md) |
 
-Do not mix the paths in the same installation without importing the existing
-AWS and Kubernetes resources into Terraform state.
+Please use one path per installation. If you move an existing installation to
+Terraform, first import its AWS and Kubernetes resources into Terraform state.
 
-Both paths deploy the cluster and stop there. Your SDK services are deployed
-separately, with `kubectl` or your existing application pipeline — but they are
+Both paths finish with the Restate cluster installed. Deploy your SDK services
+separately, with `kubectl` or your existing application pipeline — they are
 still operator-managed: the operator reconciles them as `RestateDeployment`
 resources, handling revisioning, registration, and draining. See
 [Deploying services](docs/03-deploying-services.md).

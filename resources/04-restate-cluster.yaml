@@ -37,9 +37,8 @@ spec:
   # config TOML below). "Already provisioned" is treated as success and the
   # result is cached in status.provisioned, so this runs at most once.
   #
-  # Requires auto-provision = false in the config TOML — the operator refuses
-  # to provision otherwise, guaranteeing nodes never race it by
-  # self-provisioning.
+  # Requires auto-provision = false in the config TOML. The operator validates
+  # this setting so nodes cannot race it by self-provisioning.
   cluster:
     autoProvision: true
 
@@ -236,8 +235,8 @@ spec:
       # ---- lets trimmed-log nodes and replacement pods bootstrap from S3
       # ---- instead of replaying the full log) ----
       #
-      # The bucket must be DEDICATED to this Restate cluster (cloud provisions
-      # one bucket per cluster): the prefix below resolves to
+      # Use a bucket dedicated to this Restate cluster (cloud provisions one
+      # bucket per cluster): the prefix below resolves to
       # "restate/snapshots" in every install of this manifest, and a snapshot
       # repository is bound to one cluster — a second cluster writing to the
       # same prefix fails the repository's cluster-validation, it does not
@@ -260,8 +259,9 @@ spec:
       - name: RESTATE_WORKER__SNAPSHOTS__NUM_RETAINED
         value: "2"
 
-    # Never two restate pods on one node; prefer spreading across AZs but
-    # don't require it (more replicas than zones must still schedule).
+    # Keep one Restate pod per node. Prefer spreading across AZs without making
+    # it a scheduling requirement, so replicas can still schedule when there
+    # are more replicas than zones.
     affinity:
       podAntiAffinity:
         requiredDuringSchedulingIgnoredDuringExecution:
@@ -299,8 +299,9 @@ spec:
   # default-replication ({node: 2} for 3 replicas) via env vars; folded into
   # the TOML here for readability — same effective config. These defaults are
   # also what provisioning adopts: the operator's ProvisionCluster call sends
-  # no explicit parameters. Do not run `restatectl provision` concurrently;
-  # operator-managed and manual provisioning may race and split the cluster.
+  # no explicit parameters. Keep provisioning operator-managed here because a
+  # concurrent manual `restatectl provision` call may race it and split the
+  # cluster.
   config: |
     roles = [
         "worker",
@@ -310,9 +311,9 @@ spec:
         "http-ingress",
     ]
     bind-address = "0.0.0.0:5122"
-    # Nodes must not self-provision (restate-server defaults this to true):
+    # Keep node self-provisioning disabled (restate-server defaults it to true):
     # the operator provisions the cluster instead (spec.cluster.autoProvision)
-    # and refuses to do so unless this is explicitly false.
+    # and validates that this is explicitly false.
     auto-provision = false
     default-num-partitions = 48
     default-replication = { node = 2 }
@@ -344,9 +345,9 @@ spec:
     # the operator. This repository does not automate that IAM path. It needs
     # the Pod Identity Agent, the ACK EKS controller, the operator Helm value
     # `awsPodIdentityAssociationCluster`, and a DIFFERENT role trust granting
-    # sts:AssumeRole + sts:TagSession to pods.eks.amazonaws.com. Do not point
-    # `awsPodIdentityAssociationRoleArn` at the IRSA-only role below without
-    # changing its trust. See docs/00-architecture.md#iam-for-snapshots.
+    # sts:AssumeRole + sts:TagSession to pods.eks.amazonaws.com. Before using
+    # the IRSA-only role below as `awsPodIdentityAssociationRoleArn`, update its
+    # trust. See docs/00-architecture.md#iam-for-snapshots.
     serviceAccountAnnotations:
       # e.g. arn:aws:iam::<account>:role/<eks-cluster>-restate-snapshots,
       # created in docs/02-runbook.md step 2

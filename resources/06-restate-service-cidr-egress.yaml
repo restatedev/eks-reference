@@ -1,6 +1,6 @@
 # Egress from the Restate cluster to SDK service ClusterIPs.
 #
-# REQUIRED wherever the CNI evaluates NetworkPolicy before Service DNAT, which
+# Needed wherever the CNI evaluates NetworkPolicy before Service DNAT, which
 # includes the EKS VPC CNI with NetworkPolicy enforcement enabled (the vpc-cni
 # addon's `enableNetworkPolicy=true`). Without it, the operator's registration
 # request to a new service revision times out and the RestateDeployment never
@@ -49,7 +49,7 @@
 #
 # REPLACE_ME_SERVICE_CIDR: the cluster's Service IPv4 CIDR (eksctl default
 # 10.100.0.0/16; EKS clusters created without an explicit value often use
-# 172.20.0.0/16 — do not guess, read it):
+# 172.20.0.0/16, so read the value from EKS):
 #   aws eks describe-cluster --name "$CLUSTER" --region "$REGION" \
 #     --query 'cluster.kubernetesNetworkConfig.serviceIpv4Cidr' --output text
 #

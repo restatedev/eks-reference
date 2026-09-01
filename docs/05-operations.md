@@ -71,9 +71,9 @@ curl --fail --silent localhost:9070/services | jq
 curl localhost:8080/MyService/myHandler --json '{}'
 ```
 
-Do not turn `svc/restate` into a LoadBalancer or publish port 9070 through an
-Ingress without putting a real authentication and authorization layer in
-front of it.
+Keep `svc/restate` as a ClusterIP. If port 9070 needs shared access, place a
+suitable authentication and authorization layer in front of it rather than
+publishing it directly through a LoadBalancer or Ingress.
 
 ### Web UI and the playground
 
@@ -105,9 +105,10 @@ address is not derived from the page you loaded the UI from.
 
 Restate takes it from `[ingress] advertised-address`, environment variable
 `RESTATE_INGRESS__ADVERTISED_ADDRESS`, which this reference leaves unset to match
-the profile. Do not confuse it with the top-level `RESTATE_ADVERTISED_ADDRESS`
-that `resources/04-restate-cluster.yaml` does set: that one is the node's own
-address on 5122 for peer traffic, and repurposing it breaks cluster formation.
+the profile. This differs from the top-level `RESTATE_ADVERTISED_ADDRESS` that
+`resources/04-restate-cluster.yaml` sets: that value is the node's own address
+on port 5122 for peer traffic, and changing its purpose breaks cluster
+formation.
 
 To make the playground work through a port-forward, advertise the tunnel:
 
@@ -127,10 +128,10 @@ A shared cluster wants an ingress URL that resolves for everyone, not a
 localhost tunnel. Four things have to line up, and the order matters:
 
 1. **Expose port 8080 only, through a Service you own.** `svc/restate` is
-   operator-managed and carries both ports, so do not convert it to a
-   LoadBalancer — that publishes the unauthenticated admin API at the same
-   time. Create a separate Service or Ingress selecting the same Restate pods
-   with only 8080 in its port list.
+   operator-managed and carries both ports. Keep it as a ClusterIP and create a
+   separate Service or Ingress selecting the same Restate pods with only 8080
+   in its port list. Converting the operator-managed Service to a LoadBalancer
+   would also publish the unauthenticated admin API.
 2. **Prefer internal exposure and put authentication in front.** Restate's
    ingress accepts any caller that reaches it. An internal load balancer inside
    your VPC, or an ingress controller enforcing authentication, is the minimum;
@@ -341,10 +342,10 @@ kubectl -n restate-operator logs deploy/restate-operator --tail=200
 
 The operator provisions the cluster after `restate-0` is Running; Restate pods
 become Ready afterwards. Look for failed provisioning, metadata peer DNS, or
-configuration validation errors. Do not run `restatectl provision` while
-`spec.cluster.autoProvision` remains enabled: it can race the controller, and
-operator 3.0.1 warns that concurrent provisioning methods can split the
-cluster.
+configuration validation errors. Keep provisioning operator-managed while
+`spec.cluster.autoProvision` remains enabled: running `restatectl provision`
+can race the controller, and operator 3.0.1 warns that concurrent provisioning
+methods can split the cluster.
 
 ### A RestateDeployment is not Ready
 
@@ -393,7 +394,8 @@ restate deployments list
 restate deployment describe <deployment-id> --extra
 ```
 
-Do not force-delete the old ReplicaSet as a routine cleanup step. See
+Allow the old ReplicaSet to drain through the operator rather than force-
+deleting it as a routine cleanup step. See
 [Deploying services](03-deploying-services.md#draining-old-revisions).
 
 ### Terraform cannot plan Restate custom resources
@@ -408,7 +410,7 @@ helm -n restate-operator list
 
 If AWS or Kubernetes resources were created previously by the manual path,
 Terraform will not automatically adopt them. Import them into the appropriate
-stage state or use a clean installation; do not alternate between paths.
+stage state or use a clean installation, and continue with one delivery path.
 
 ## Routine changes
 
@@ -426,7 +428,8 @@ cluster, not your services. See
 
 `spec.storage.storageRequestBytes` may only increase. Increasing it updates the
 PVC request; actual expansion depends on the EBS CSI driver and the
-StorageClass. Never reduce the value or assume that retained PVs shrink.
+StorageClass. Keep the value unchanged or increase it; retained PVs do not
+shrink.
 
 ### Change runtime sizing or configuration
 
@@ -467,8 +470,8 @@ Two independent mechanisms protect different failure modes:
 
 Neither mechanism is a complete, automatic disaster-recovery workflow.
 Released PVs retain their old claim references and do not bind to replacement
-PVCs automatically. Before any destructive operation, record the PV, PVC,
-Availability Zone, and EBS volume-id mapping:
+PVCs automatically. Before removal or another data-affecting change, record
+the PV, PVC, Availability Zone, and EBS volume-id mapping:
 
 ```bash
 kubectl -n restate get pvc -o wide
@@ -476,9 +479,9 @@ kubectl get pv \
   -o custom-columns='PV:.metadata.name,STATUS:.status.phase,CLAIM-NS:.spec.claimRef.namespace,CLAIM:.spec.claimRef.name,VOLUME:.spec.csi.volumeHandle'
 ```
 
-If recovery is required, stop and design the reattachment or snapshot-restore
-procedure for the incident. Do not delete Released PVs or empty the snapshot
-bucket merely to make a deployment command succeed.
+If recovery is required, pause and agree on the reattachment or snapshot-
+restore procedure for the incident. Preserve Released PVs and snapshot objects
+while working through a deployment error.
 
 ## Teardown checklist
 
@@ -486,7 +489,7 @@ Teardown is intentionally conservative because application revisions may need
 to drain and data resources may need to survive. The order below applies to
 both deployment paths through removal of the `RestateCluster`:
 
-1. Stop new traffic, create and verify the latest snapshot, and record the
+1. Pause new traffic, create and verify the latest snapshot, and record the
    current PV/PVC/AZ/EBS mapping **before** deleting anything.
 2. Delete every `RestateDeployment` and wait for its finalizer to drain all
    revisions.
@@ -509,7 +512,7 @@ kubectl delete restatecluster restate --wait=true --timeout=15m
 ```
 
 If service deletion times out, inspect the pinned invocations and continue
-waiting. Do not remove the finalizer or delete the cluster underneath them.
+waiting. Allow the finalizer to complete before deleting the cluster.
 
 The remaining manual-path Kubernetes cleanup after steps 1–4 is:
 
@@ -533,8 +536,8 @@ kubectl delete namespace restate-apps restate-operator
 kubectl delete storageclass restate-gp3
 ```
 
-Do not delete a CRD merely because this installation is gone. CRDs are
-cluster-wide, Helm annotates these with `helm.sh/resource-policy: keep`, and
+Retain these CRDs until a cluster-wide dependency check confirms they are no
+longer used. Helm annotates them with `helm.sh/resource-policy: keep`, and
 deleting one also deletes every remaining custom resource of that kind. If
 another operator installation or CR exists, leave all three definitions in
 place and record the shared ownership.
@@ -545,9 +548,9 @@ its revision and removed the ReplicaSet, Services, and pods, leaving
 `restate-apps` empty; deleting the `RestateCluster` then removed the namespace
 and PVCs while all three PVs became `Released` with their EBS volumes intact.
 
-For Terraform, do not run the manual deletion commands for resources still in
-state. Follow the ownership decisions, saved destroy plans, and post-destroy CRD
-cleanup in
+For Terraform-managed resources, use the ownership decisions, saved destroy
+plans, and post-destroy CRD cleanup rather than the manual deletion commands in
+this section. See
 [Terraform: Destroy](../terraform/README.md#destroy).
 
 ### What a completed teardown leaves behind
@@ -563,7 +566,7 @@ doing exactly that on the manual path:
 | Snapshot bucket and its objects | Dedicated bucket, no lifecycle rule | Use the tool that owns it; empty it only after an explicit retention decision |
 | Snapshots IAM role and policy | Manual path: eksctl/CloudFormation plus IAM policy; Terraform path: stage-01 state unless transferred | Remove through the owning delivery tool, or transfer ownership explicitly |
 | IAM OIDC provider | Cluster-wide, shared by every IRSA role | Keep unless the EKS cluster is going too |
-| The EKS cluster itself | This repository never creates it | Your cluster provisioning tool |
+| The EKS cluster itself | This repository leaves it unchanged | Your cluster provisioning tool |
 
 The retained volumes are the item most often forgotten, and the window to
 identify them is narrower than it looks: the PV objects that carry the
