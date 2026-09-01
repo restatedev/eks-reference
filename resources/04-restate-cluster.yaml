@@ -203,6 +203,19 @@ spec:
       - name: RESTATE_ADMIN__QUERY_ENGINE__DATAFUSION_OPTIONS
         value: '{ "datafusion.execution.batch_size" = "256" }'
 
+      # Deliberately unset, like the profile: the address the Web UI's
+      # playground (served on the admin port) tells the BROWSER to send
+      # invocations to. No single value suits both a `kubectl port-forward`
+      # workflow (http://localhost:8080/) and a shared ingress URL, and setting
+      # it rolls all three pods. See
+      # docs/05-operations.md#web-ui-and-the-playground before adding it.
+      #
+      # NOT the same setting as RESTATE_ADVERTISED_ADDRESS above, which is this
+      # node's own 5122 address for peer traffic.
+      #
+      # - name: RESTATE_INGRESS__ADVERTISED_ADDRESS
+      #   value: http://localhost:8080/
+
       # ---- experimental flags: the profile pins image 1.7.7, these flags are
       # ---- validated against exactly that version — revisit on any upgrade ----
       - name: RESTATE_EXPERIMENTAL_ENABLE_PROTOCOL_V7

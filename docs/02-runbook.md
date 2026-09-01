@@ -336,6 +336,12 @@ The port-forward tunnels through the kubelet and bypasses NetworkPolicy. This
 is the intended operator access path for the unauthenticated admin API. Never
 publish port 9070 directly.
 
+The same forward serves the Web UI at `http://localhost:9070/ui`. Keep 8080 in
+the command: the UI is served by the admin port, but its playground sends
+invocations to the ingress port, and your browser is what dials it. See
+[Operations: Web UI and the playground](05-operations.md#web-ui-and-the-playground)
+for a shared-cluster setup.
+
 ## Completion checklist
 
 - [ ] `RestateCluster/restate` is provisioned and Ready.

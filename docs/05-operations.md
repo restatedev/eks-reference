@@ -69,6 +69,80 @@ Do not turn `svc/restate` into a LoadBalancer or publish port 9070 through an
 Ingress without putting a real authentication and authorization layer in
 front of it.
 
+### Web UI and the playground
+
+Restate serves its Web UI on the **admin** port, so the port-forward above also
+gets you the UI. Keep both ports in that single command even if the UI is all
+you want:
+
+```bash
+kubectl -n restate port-forward svc/restate 8080:8080 9070:9070
+# then open http://localhost:9070/ui
+```
+
+Forwarding only 9070 gets you a working UI that cannot invoke anything. The
+playground sends invocations to the **ingress** port, 8080, and your browser is
+what dials it — so the URL the UI uses has to resolve from your machine, not
+from inside the cluster. Use identical local and remote ports, as above, so
+that whichever address the UI resolves for ingress reaches the tunnel.
+
+Restate takes that address from `[ingress] advertised-address`, environment
+variable `RESTATE_INGRESS__ADVERTISED_ADDRESS`. This reference leaves it unset,
+matching the profile. Do not confuse it with the top-level
+`RESTATE_ADVERTISED_ADDRESS` that `resources/04-restate-cluster.yaml` does set:
+that one is the node's own address on 5122 for peer traffic, and changing it
+breaks cluster formation.
+
+If the playground cannot reach ingress through the port-forward, set the
+ingress advertised address to the tunnel:
+
+```yaml
+- name: RESTATE_INGRESS__ADVERTISED_ADDRESS
+  value: http://localhost:8080/
+```
+
+That value is correct only for people using a port-forward. It is a per-
+environment choice, which is why no value ships here.
+
+### Making the playground work for a team
+
+A shared cluster wants an ingress URL that resolves for everyone, not a
+localhost tunnel. Four things have to line up, and the order matters:
+
+1. **Expose port 8080 only, through a Service you own.** `svc/restate` is
+   operator-managed and carries both ports, so do not convert it to a
+   LoadBalancer — that publishes the unauthenticated admin API at the same
+   time. Create a separate Service or Ingress selecting the same Restate pods
+   with only 8080 in its port list.
+2. **Prefer internal exposure and put authentication in front.** Restate's
+   ingress accepts any caller that reaches it. An internal load balancer inside
+   your VPC, or an ingress controller enforcing authentication, is the minimum;
+   an internet-facing endpoint with neither invites anyone to invoke your
+   handlers.
+3. **Open the cluster's ingress peers.** `resources/04-restate-cluster.yaml`
+   admits ingress only from `restate-apps` under `security.networkPeers`, so
+   where NetworkPolicy is enforced, traffic arriving from a load balancer is
+   denied — and a `namespaceSelector` cannot match it, because it does not
+   originate from a pod. Widen that peer list for the actual source, and check
+   which peer types the CRD accepts before assuming a form.
+4. **Set the advertised address to the URL people will use**, so the UI's
+   playground points at it:
+
+   ```yaml
+   - name: RESTATE_INGRESS__ADVERTISED_ADDRESS
+     value: https://restate-ingress.internal.example.com/
+   ```
+
+Changing that environment variable rolls all three Restate pods, which moves
+partition leadership. Do it deliberately, one change at a time, and verify
+cluster health afterwards with the [five-minute health
+check](#five-minute-health-check).
+
+Setting the advertised address changes only what the UI and CLI *advertise*. It
+does not expose anything by itself, and it does not change what the server
+binds to. Equally, exposing ingress without setting it leaves the playground
+pointing somewhere your users cannot reach.
+
 ## Verify the snapshot path
 
 Automatic snapshots require both the configured record threshold and interval,
