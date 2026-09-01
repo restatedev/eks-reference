@@ -7,6 +7,12 @@ reference deployment those services run in namespace `restate-apps` as
 Start from `resources/05-restate-compute.yaml`, but treat it as a lifecycle
 example—not a complete production application template.
 
+Both deployment paths stop at the cluster. Neither the runbook nor the Terraform
+modules deploy your services: a service changes at your application's cadence,
+from your application's pipeline, and does not belong in the state that owns the
+cluster. Apply the manifest below with `kubectl`, or fold it into whatever
+already ships your applications.
+
 The operator behavior below was verified against chart `3.0.1`. For the
 Restate-side compatibility model, see
 [Service versioning](https://docs.restate.dev/services/versioning).

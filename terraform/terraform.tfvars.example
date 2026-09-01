@@ -10,10 +10,6 @@ region       = "eu-central-1"
 # Dedicated to this Restate cluster — see docs/01-prerequisites.md.
 snapshots_bucket = "my-eks-cluster-restate-snapshots"
 
-# Uncomment once you have an SDK service image; empty skips compute
-# (runbook step 5).
-# service_image = "123456789012.dkr.ecr.eu-central-1.amazonaws.com/service:v1"
-
 # The IAM OIDC provider is looked up by default — most clusters already have
 # one (the EBS CSI driver's IRSA install, or a previous eksctl association).
 # Only on a fresh cluster with none:

@@ -23,8 +23,7 @@ NetworkPolicy enforcement.
 
 02-restate
   ├─ RestateCluster/restate
-  ├─ Service-CIDR egress NetworkPolicy (opt-out)
-  └─ optional RestateDeployment/service
+  └─ Service-CIDR egress NetworkPolicy (opt-out)
 ```
 
 The two stages have separate state and must be applied in order.
@@ -73,7 +72,6 @@ Both stages read the same `terraform.tfvars` and declare the same input set.
 | `cluster_name` | ✓ | — | Existing EKS cluster; maximum 46 characters because it is embedded in the IAM role name |
 | `region` | ✓ | — | EKS and snapshot-bucket AWS region |
 | `snapshots_bucket` | ✓ | — | Globally unique bucket name dedicated to this Restate cluster |
-| `service_image` | — | `""` | SDK service image; empty skips `RestateDeployment/service` |
 | `create_oidc_provider` | — | `false` | Create the cluster IAM OIDC provider instead of looking it up |
 | `create_service_cidr_egress_policy` | — | `true` | Apply the Service-CIDR egress policy; required where the CNI enforces NetworkPolicy |
 
@@ -152,8 +150,8 @@ From the repository root:
 cp terraform/terraform.tfvars.example terraform/terraform.tfvars
 ```
 
-Edit the file and set `cluster_name`, `region`, and `snapshots_bucket`. Leave
-`service_image` empty for the first cluster-only deployment.
+Edit the file and set `cluster_name`, `region`, and `snapshots_bucket`. Those
+three are the whole required input set.
 
 ### 1. Initialize and plan stage 01
 
@@ -227,26 +225,27 @@ Use the [manual runbook completion checklist](../docs/02-runbook.md#completion-c
 and [Operations guide](../docs/05-operations.md) for the rest of the health
 checks.
 
-## Deploy the example SDK service
+## SDK services are out of scope
 
-Set an immutable SDK service image in `terraform.tfvars`:
+These modules deploy the Restate cluster. They do not deploy your services, and
+there is no `service_image` variable.
 
-```hcl
-service_image = "123456789012.dkr.ecr.eu-central-1.amazonaws.com/service:v1"
-```
+That is a deliberate boundary rather than a missing feature. A `RestateDeployment`
+is application lifecycle: it changes on every image build, at your application's
+cadence, from your application's pipeline. Putting it in this state would mean
+every image bump is an infrastructure change, `terraform plan` reports drift
+whenever anything else rolls out a revision, and `terraform destroy` on the
+cluster blocks on the operator's drain finalizer waiting for in-flight
+invocations. Cluster state and application state also have very different blast
+radii, and sharing one state file gives them the same one.
 
-Plan and apply stage 02 again. Terraform creates
-`RestateDeployment/service` only while `service_image` is non-empty.
+Deploy services with `kubectl` from `resources/05-restate-compute.yaml`, or from
+whatever already deploys your applications. See
+[Deploying SDK services](../docs/03-deploying-services.md).
 
-```bash
-terraform -chdir=terraform/02-restate plan \
-  -var-file=../terraform.tfvars
-terraform -chdir=terraform/02-restate apply \
-  -var-file=../terraform.tfvars
-```
-
-Read [Deploying SDK services](../docs/03-deploying-services.md) before using the
-skeleton for a production application or rolling out a second version.
+What stage 02 does provide is everything the cluster side of registration needs,
+including the Service-CIDR egress policy described above — so a service deployed
+by any means can register.
 
 ## Outputs
 
@@ -340,8 +339,9 @@ terraform -chdir=terraform/01-foundation destroy \
 Before confirming either destroy:
 
 - stop new traffic and verify a current snapshot;
-- allow `RestateDeployment` revisions to drain—their finalizer can make destroy
-  appear paused;
+- delete your SDK services first, and let their revisions drain: Terraform does
+  not manage `RestateDeployment`s, so it will not wait for them, and deleting
+  the cluster from under a service leaves invocations with nowhere to go;
 - understand that deleting `RestateCluster/restate` deletes the operator-owned
   namespace and PVCs;
 - record the PV-to-EBS volume mapping; the `Retain` policy preserves the PVs but

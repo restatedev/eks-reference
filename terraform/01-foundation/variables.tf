@@ -30,16 +30,6 @@ variable "snapshots_bucket" {
   type        = string
 }
 
-variable "service_image" {
-  description = <<-EOT
-    Container image for the SDK service (resources/05-restate-compute.yaml),
-    used by stage 02. Leave empty to skip deploying compute — the equivalent
-    of stopping the runbook before step 5.
-  EOT
-  type        = string
-  default     = ""
-}
-
 variable "create_oidc_provider" {
   description = <<-EOT
     Whether stage 01 creates the cluster's IAM OIDC provider for IRSA.

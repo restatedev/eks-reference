@@ -310,7 +310,8 @@ Update the pod template—usually the image—in
 `resources/05-restate-compute.yaml`, review the diff, and apply it. The
 operator creates a new immutable revision and drains the old one.
 
-For Terraform, set `service_image` and apply stage 02. See
+This is the same on both deployment paths: the Terraform modules deploy the
+cluster, not your services. See
 [Deploying services](03-deploying-services.md#roll-out-a-new-version).
 
 ### Increase storage

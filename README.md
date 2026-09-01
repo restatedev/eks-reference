@@ -69,6 +69,10 @@ The complete checklist and verification commands are in
 Do not mix the paths in the same installation without importing the existing
 AWS and Kubernetes resources into Terraform state.
 
+Both paths deploy the cluster and stop there. Your SDK services are deployed
+separately, with `kubectl` or your existing application pipeline — see
+[Deploying services](docs/03-deploying-services.md).
+
 ## Architecture at a glance
 
 ```text
@@ -122,7 +126,7 @@ Recommended order for a first deployment:
 resources/             canonical Kubernetes YAML, Helm values, and IAM policy
 terraform/01-foundation
                        S3, IAM/IRSA, namespaces, StorageClass, operator
-terraform/02-restate   RestateCluster and optional RestateDeployment
+terraform/02-restate   RestateCluster and its Service-CIDR egress policy
 docs/                  architecture, deployment, operations, and design notes
 shell.nix              optional development shell with the required CLI tools
 ```
@@ -143,7 +147,9 @@ deployment paths:
 The manual path requires every active `REPLACE_ME_*` value in a file being
 applied to be replaced first. The commented Pod Identity alternative may stay
 unset, and the compute image may stay unset while compute is skipped. The
-Terraform path performs required substitutions from variables in memory.
+Terraform path performs the substitutions it needs in memory, from its variables
+and from the EKS cluster itself; the service image is not among them, because
+Terraform does not deploy services.
 
 ## Important design decisions
 

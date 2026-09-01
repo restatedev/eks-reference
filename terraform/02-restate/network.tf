@@ -3,9 +3,12 @@
 # Required wherever the CNI evaluates NetworkPolicy before Service DNAT — the
 # EKS VPC CNI with enforcement enabled — because the operator's pod-label egress
 # rule does not cover the ClusterIP it registers each service revision under.
-# Without it, kubernetes_manifest.restate_compute applies cleanly and the
-# RestateDeployment then sits NotReady while registration times out. The file's
-# header has the mechanism.
+# Without it, a RestateDeployment applies cleanly and then sits NotReady while
+# registration times out. The file's header has the mechanism.
+#
+# This belongs to the cluster, not to any application: it is what makes service
+# registration possible at all, whoever deploys the service and however. That
+# is why it stays here even though this stage does not manage RestateDeployments.
 #
 # Unlike the manual path, nothing here is a placeholder to fill in: EKS reports
 # the cluster's Service CIDR, so the policy is always generated with the correct
