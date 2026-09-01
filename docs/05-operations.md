@@ -244,6 +244,52 @@ The policies can exist while doing nothing if the CNI does not enforce them.
 On a cluster without enforcement, every pod should be treated as trusted with
 the Restate admin API and every SDK endpoint.
 
+### Prove that the boundary blocks
+
+Existing policies and an enforcing CNI are not the same as a boundary that
+holds. Test the denials directly, with throwaway pods that touch nothing:
+
+```bash
+IMG=curlimages/curl:8.10.1
+GREETER_IP=$(kubectl -n restate-apps get svc -o jsonpath='{.items[0].spec.clusterIP}')
+
+# from the compute namespace: ingress allowed, admin denied
+kubectl -n restate-apps run probe --rm -i --restart=Never --image=$IMG -- sh -c '
+  curl -sS -m 5 -o /dev/null -w "apps->ingress 8080: %{http_code} %{time_total}s\n" http://restate.restate.svc.cluster.local:8080/ ;
+  curl -sS -m 5 -o /dev/null -w "apps->admin   9070: %{http_code} %{time_total}s\n" http://restate.restate.svc.cluster.local:9070/services'
+
+# from an unrelated namespace: both denied
+kubectl -n default run probe --rm -i --restart=Never --image=$IMG -- sh -c "
+  curl -sS -m 5 -o /dev/null -w 'default->greeter 9080: %{http_code} %{time_total}s\n' http://$GREETER_IP:9080/ ;
+  curl -sS -m 5 -o /dev/null -w 'default->ingress 8080: %{http_code} %{time_total}s\n' http://restate.restate.svc.cluster.local:8080/"
+```
+
+**A timeout is the pass signal and a fast connection is the failure.** Both
+render as HTTP `000`, so read `time_total`, not the status code: a denial sits
+at the full 5-second limit, while a refusal or a success returns in
+milliseconds.
+
+Measured on EKS 1.34 with `vpc-cni` enforcement enabled:
+
+| From | To | Result | Meaning |
+|---|---|---|---|
+| `restate-apps` | ingress 8080 | `400` in 2.1s | reachable, as intended — a bare `GET /` is a 400 from ingress |
+| `restate-apps` | admin 9070 | timeout at 5.0s | denied: workloads cannot reach the unauthenticated admin API |
+| `default` | Greeter 9080 | timeout at 5.0s | denied: an unrelated pod cannot bypass Restate to call an SDK endpoint |
+| `default` | ingress 8080 | timeout at 5.0s | denied: `networkPeers.ingress` admits only `restate-apps` |
+
+The fifth direction, Restate reaching a service ClusterIP on 9080, must
+*succeed*; it is what
+[`resources/06-restate-service-cidr-egress.yaml`](../resources/06-restate-service-cidr-egress.yaml)
+exists for. If it fails, see
+[a RestateDeployment is not Ready](#a-restatedeployment-is-not-ready).
+
+Re-run this after any change to `security.networkPeers`, to
+`resources/00-namespaces.yaml`, or to CNI enforcement. Widening a peer list to
+expose ingress externally, as under [making the playground work for a
+team](#making-the-playground-work-for-a-team), changes rows three and four by
+design — know which ones you meant to change.
+
 ## Troubleshooting by symptom
 
 ### A Restate pod stays Pending
