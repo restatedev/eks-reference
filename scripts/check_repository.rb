@@ -32,6 +32,7 @@ end
 markdown_files = Dir[
   REPOSITORY_ROOT.join("README.md"),
   REPOSITORY_ROOT.join("docs/**/*.md"),
+  REPOSITORY_ROOT.join("misc/**/*.md"),
   REPOSITORY_ROOT.join("terraform/**/*.md")
 ].sort.map { |path| Pathname.new(path) }
 

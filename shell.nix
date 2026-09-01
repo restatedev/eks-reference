@@ -17,5 +17,13 @@ with pkgs; pkgs.mkShell {
 
     jq
     ruby # repository YAML/JSON and documentation-link checks
+
+    # Customer-facing PDF source and its structural/visual verification tools.
+    (python3.withPackages (pythonPackages: with pythonPackages; [
+      reportlab
+      pypdf
+      pdfplumber
+    ]))
+    poppler-utils
   ];
 }

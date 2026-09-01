@@ -134,6 +134,7 @@ networking, IAM, and ownership details.
 |---|---|---|
 | Confirm the EKS cluster is suitable and your identities are authorized | [Prerequisites](docs/01-prerequisites.md) | Required before installation |
 | Install with CLI tools | [Manual runbook](docs/02-runbook.md) | Choose this or Terraform |
+| Carry a printable installation and handoff reference | [Manual deployment PDF](output/pdf/restate-eks-manual-deployment-reference.pdf) | Optional companion to the manual runbook |
 | Install with Terraform or OpenTofu | [Terraform guide](terraform/README.md) | Choose this or the manual runbook |
 | Verify, operate, troubleshoot, or remove the deployment | [Operations and troubleshooting](docs/05-operations.md) | Required for handoff and day-two work |
 | Understand topology, security, and ownership | [Architecture](docs/00-architecture.md) | Reference during design or review |
@@ -152,6 +153,8 @@ terraform/01-foundation
                        S3, IAM/IRSA, namespaces, StorageClass, operator
 terraform/02-restate   RestateCluster and its Service-CIDR egress policy
 docs/                  architecture, deployment, operations, and design notes
+misc/pdf/              source and LLM-oriented build guide for the PDF companion
+output/pdf/            committed customer-facing PDF artifacts
 scripts/               repository validation checks
 shell.nix              optional development shell with the required CLI tools
 ```
