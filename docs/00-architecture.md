@@ -110,6 +110,11 @@ directions:
    selecting every pod in `restate-apps` and allowing only the `restate`
    namespace. This prevents direct calls that bypass Restate.
 
+These boundaries govern network reachability, not authorization between
+services. Any service registered with the cluster can invoke any other through
+Restate, so one `RestateCluster` is one trust domain; see
+[Team isolation](03-deploying-services.md#team-isolation).
+
 ### Admin API
 
 The admin API on port 9070 has no authentication and grants full cluster
@@ -243,6 +248,72 @@ Kubernetes `$(VAR)` expansion in environment values is order-sensitive, so
 `POD_NAMESPACE` must appear before values that reference it. Environment
 entries supplied in `spec.compute.env` override operator defaults with the
 same name.
+
+## Data durability model
+
+Each Restate pod's volume holds three kinds of data under `/restate-data`, and
+they are not equally replaceable:
+
+| Data | Role that writes it | If lost beyond the replication factor |
+|---|---|---|
+| Replicated log segments | `log-server` | **Data loss.** The log is the record of every invocation; nothing else reconstructs it |
+| Cluster metadata (node, log, and partition configuration; service schemas) | `metadata-server`, Raft, majority of nodes | **Cluster loss.** Nodes cannot agree on cluster membership or log configuration without it |
+| Partition stores (RocksDB state per partition) | `worker` | **Recoverable.** Rebuilt from the latest snapshot in the bucket plus replay of the log after it |
+
+With node replication `2` on three nodes, losing one node's volume loses
+nothing; losing two volumes at once loses log records that had not yet been
+covered by a snapshot, and can lose the metadata Raft majority. Partition
+snapshots in S3 exist to speed up that rebuild and to let the log be trimmed;
+they are not a backup of the cluster. There is no supported backup and restore
+procedure for a Restate cluster today. Protecting the EBS volumes is therefore
+the operator's first duty: the `Retain` reclaim policy, encryption, and a
+deliberate teardown order are what this repository provides toward it.
+
+### Recommendation: keep metadata out of the volumes
+
+Restate can store cluster metadata in Amazon S3 instead of the built-in Raft
+`metadata-server` role, and also supports DynamoDB (Restate 1.5.4 and later)
+and etcd; see the
+[metadata storage documentation](https://docs.restate.dev/server/metadata).
+For a deployment whose data matters, we strongly recommend the object-store
+provider on AWS:
+
+- it removes the one piece of irreplaceable state that would otherwise share a
+  volume with the log, and the object store's durability replaces the Raft
+  majority as the thing that has to survive;
+- it makes the object store a day-one dependency instead of something that can
+  be deferred. A cluster with the replicated metadata store starts and serves
+  traffic with no object store and no snapshots configured at all, but its log
+  is then never trimmed, and the volumes fill up later with no warning that
+  anything was missing;
+- the provider is chosen at initial deployment. Migrating from replicated to
+  an external store later is supported, but it stops invocation processing for
+  the duration of the migration.
+
+The configuration change in `resources/04-restate-cluster.yaml` is to remove
+`metadata-server` from `roles` and add, next to the snapshot destination:
+
+```toml
+[metadata-client]
+type = "object-store"
+path = "s3://<snapshots-bucket>/restate/metadata"
+aws-region = "<region>"
+```
+
+The IAM policy in `resources/01-restate-snapshots-iam-policy.json` grants
+bucket-wide object read, write, and delete, which is what the provider uses.
+This repository's validation covers the replicated store only; test the
+object-store configuration before adopting it. Only Amazon S3 is
+supported for metadata; S3-compatible stores such as MinIO are supported for
+snapshots but not for metadata, and the bucket must be in the same region as
+the cluster because metadata latency affects cluster operations directly.
+Outside AWS, the equivalent is etcd; GCS and Azure Blob are snapshot
+destinations only.
+
+This repository still ships the replicated metadata store because it is what
+the source profile runs and what was validated end to end here. Treat the
+switch as a decision to make before the first `RestateCluster` apply, not a
+later tuning step.
 
 ## Storage and snapshots
 

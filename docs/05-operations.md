@@ -161,6 +161,30 @@ does not expose anything by itself, and it does not change what the server
 binds to. Equally, exposing ingress without setting it leaves the playground
 pointing somewhere your users cannot reach.
 
+## Observability
+
+Restate needs no agent or sidecar; the work is on the platform side.
+
+- **Metrics.** Every Restate pod serves Prometheus metrics on port 5122 at
+  `/metrics`, the same port as node traffic. The operator's NetworkPolicy
+  admits that port only from the `restate` and `restate-operator` namespaces,
+  so a scraper elsewhere must be added under `security.networkPeers.node` in
+  `resources/04-restate-cluster.yaml` (the older `metrics` key is deprecated).
+  Scrape each pod through `svc/restate-cluster`, the headless Service, so
+  per-node series keep their identity. Restate publishes two Grafana dashboards
+  to import; see [Metrics](https://docs.restate.dev/server/monitoring/metrics).
+- **Logs.** The operator sets `RESTATE_LOG_FORMAT=json` on the pods, so the
+  platform's usual log collector picks them up as structured events. Keep the
+  default `info` level in production; see
+  [Logging](https://docs.restate.dev/server/monitoring/logging).
+- **Traces.** Restate exports OTLP traces of invocations when
+  `tracing-endpoint` points at a collector; see
+  [Tracing](https://docs.restate.dev/server/monitoring/tracing). A collector
+  inside the cluster has a private address, which the operator's default egress
+  policy blocks, so add its address under `spec.security.networkEgressRules`
+  as described under
+  [Private AWS endpoints](00-architecture.md#private-aws-endpoints).
+
 ## Verify the snapshot path
 
 Automatic snapshots require both the configured record threshold and interval,
@@ -220,6 +244,25 @@ replacement time, or log growth — then either schedule manual snapshots or low
 `RESTATE_WORKER__SNAPSHOTS__SNAPSHOT_INTERVAL_NUM_RECORDS`. The 100,000 comes
 from the profile and is left at its profile value here; see
 [Profile fidelity](04-profile-fidelity.md).
+
+The two settings combine in three ways, per the
+[Restate snapshot documentation](https://docs.restate.dev/server/snapshots#configuring-automatic-snapshotting):
+
+| Configured | Trigger |
+|---|---|
+| Both | Interval elapsed **and** record threshold reached, per partition (the shipped configuration) |
+| `SNAPSHOT_INTERVAL` only | Every partition snapshots on the interval, regardless of traffic |
+| `SNAPSHOT_INTERVAL_NUM_RECORDS` only | Record count only, no time component |
+
+The record gate matters beyond node replacement: the log can only be trimmed
+up to the oldest retained snapshot of each partition, so a low-traffic
+partition that never reaches the threshold also never lets its log segment be
+trimmed. If a bounded time between snapshots is the goal, drop the record
+threshold and set the interval alone; Restate's own documentation example uses
+`60m`. The shipped values are the Restate Cloud profile's and are left as they
+are here so the manifest stays a faithful translation. `NUM_RETAINED` is `2`
+for the same reason; Restate's documentation recommends `1` for most
+deployments, because trimming follows the oldest retained snapshot.
 
 Check where partitions actually stand before concluding anything is broken:
 
@@ -441,6 +484,16 @@ affect a live replicated system. Before applying:
 3. change one dimension at a time;
 4. watch pods and `restatectl status` until the cluster is healthy again.
 
+### Node maintenance
+
+The operator creates a PodDisruptionBudget on the Restate pods with
+`maxUnavailable: 1`, so a node drain or a managed node-group upgrade evicts one
+Restate pod at a time and waits for it to be Ready elsewhere before the next.
+With three nodes and required host anti-affinity, an evicted pod has nowhere to
+go until a replacement node exists, so drain with a surge node available or
+expect the pod to sit Pending until the drained node returns. Check
+`restatectl status` between nodes, as for any other roll.
+
 ### Upgrade Restate or the operator
 
 The image and chart are intentionally pinned. Before upgrading:
@@ -456,6 +509,26 @@ The image and chart are intentionally pinned. Before upgrading:
 
 Changing only the container image is not a complete upgrade review.
 
+On the Terraform path, `terraform apply` does not wait for the roll. The
+`RestateCluster` is already `Ready=True` when the change is submitted, so the
+stage-02 wait is satisfied immediately and Terraform returns while the
+StatefulSet is still replacing pods one at a time, highest ordinal first.
+Gate the next pipeline step on the StatefulSet instead:
+
+```bash
+kubectl -n restate rollout status statefulset/restate --timeout=15m
+kubectl -n restate exec restate-0 -- restatectl status
+```
+
+Expect the roll itself to take a few minutes for three pods. Clients may see a
+connection reset at the moment a pod terminates; invocations are retried by
+Restate, but a client holding an open connection to that pod is not.
+
+A `kubectl port-forward` to `svc/restate` is pinned to one pod and dies when
+that pod is replaced, so a client tunnelled through it sees connection errors
+during a roll that in-cluster clients do not. Re-establish the forward after
+the roll rather than reading those errors as cluster unavailability.
+
 ## Data safety and recovery boundaries
 
 Two independent mechanisms protect different failure modes:
@@ -468,7 +541,11 @@ Two independent mechanisms protect different failure modes:
 - **S3 partition snapshots** allow nodes to bootstrap without replaying the
   entire retained log and provide recovery material outside the EBS volumes.
 
-Neither mechanism is a complete, automatic disaster-recovery workflow.
+Neither mechanism is a complete, automatic disaster-recovery workflow, and
+snapshots are not a backup: the replicated log and the cluster metadata exist
+only on the volumes, and partition state is what snapshots let you rebuild. See
+[Data durability model](00-architecture.md#data-durability-model) for which
+data is irreplaceable and for the recommendation to keep metadata in S3.
 Released PVs retain their old claim references and do not bind to replacement
 PVCs automatically. Before removal or another data-affecting change, record
 the PV, PVC, Availability Zone, and EBS volume-id mapping:
