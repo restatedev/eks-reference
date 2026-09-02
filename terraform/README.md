@@ -256,8 +256,12 @@ checks.
 
 ## SDK services: operator-managed, not Terraform-managed
 
-These modules deploy the Restate cluster. They do not deploy your services, and
-there is no `service_image` variable.
+Stages 01 and 02 deploy the Restate cluster. They do not deploy your services,
+and they have no `service_image` variable. A separate, optional
+`terraform/03-services` example shows what applying the RestateDeployment from
+Terraform looks like if that is where your delivery pipeline already lives; its
+limitations are described under
+[Health signals for delivery tools](../docs/03-deploying-services.md#health-signals-for-delivery-tools).
 
 Your services are still managed, just not from here. The operator reconciles
 them through its own `RestateDeployment` custom resource, which gives each
@@ -279,6 +283,10 @@ whatever already ships your applications:
 
 - [Deploying SDK services](../docs/03-deploying-services.md) — the lifecycle
   contract, rollout, drain, rollback, and per-symptom troubleshooting;
+- [Health signals for delivery tools](../docs/03-deploying-services.md#health-signals-for-delivery-tools)
+  — how a rejected revision surfaces in Terraform, Argo CD, and Flux, with an
+  Argo CD health check; the common split is Terraform for these two stages and
+  Argo CD for the applications;
 - [operator service examples](https://github.com/restatedev/restate-operator/tree/main/examples/services/greeter)
   — upstream `RestateDeployment` manifests, including a Knative variant;
 - [Restate on Kubernetes](https://docs.restate.dev/deploy/services/kubernetes)

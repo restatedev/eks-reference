@@ -40,9 +40,12 @@ spec:
     spec:
       containers:
         - name: service
-          # REPLACE_ME: the SDK service image (e.g. an ECR image built from
-          # this repo's node service). Keep the port name "restate" because the
-          # operator uses it for the registration URL.
+          # REPLACE_ME: your SDK service image, pushed to a registry the nodes
+          # can pull from. This repository ships no service; start from one of
+          # the SDK examples at https://github.com/restatedev/examples in the
+          # language of your choice. Any image listening on 9080 works. Keep
+          # the port name "restate" because the operator uses it for the
+          # registration URL.
           image: REPLACE_ME_SERVICE_IMAGE
           ports:
             - name: restate

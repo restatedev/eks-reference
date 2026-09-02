@@ -14,3 +14,6 @@ crash.log
 # Generate your own with `terraform init` and commit it in your fork if you
 # standardize on one tool.
 .terraform.lock.hcl
+
+# apply/timeline logs written during validation runs
+*.log

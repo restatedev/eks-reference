@@ -11,7 +11,11 @@ image, configuration, scaling, and rollout. Apply the example after replacing
 its image placeholder.
 
 Start from `resources/05-restate-compute.yaml`, but treat it as a lifecycle
-example—not a complete production application template.
+example—not a complete production application template. This repository ships
+no service image. Build one from the
+[Restate SDK examples](https://github.com/restatedev/examples) in the language
+your team uses; any image whose SDK endpoint listens on port 9080 fits the
+manifest unchanged.
 
 Both deployment paths finish with the Restate cluster installed. Neither the
 runbook nor the Terraform modules deploy your services: a service changes at
@@ -241,6 +245,125 @@ An object that remains `Terminating` is usually waiting for pinned invocations,
 not stuck. Inspect the Restate deployment before considering finalizer changes.
 If the target `RestateCluster` no longer exists, the operator permits immediate
 cleanup because it cannot query or drain through that cluster.
+
+## Team isolation
+
+A Restate cluster is one trust domain. Every service registered with it can
+invoke every other service through the cluster, regardless of which namespace
+the services run in or who deployed them: the NetworkPolicies in this
+repository control which pods may reach Restate's ingress and which may reach
+SDK pods directly, but service-to-service calls travel through Restate itself,
+which does not authorize them. Service names are also cluster-global, so two
+teams cannot both register a service called `Greeter`.
+
+Sharing one Restate cluster is therefore appropriate for teams that already
+trust each other's code. Teams or applications that must not be able to call
+into each other belong on separate `RestateCluster`s, and should talk to each
+other the way any external client does: through the other cluster's ingress,
+behind the authenticating layer described under
+[Making the playground work for a team](05-operations.md#making-the-playground-work-for-a-team).
+
+The manifests in this repository assume a single cluster named `restate`; the
+[invariants list](00-architecture.md#invariants-to-preserve) enumerates what
+that name is wired into. A second cluster needs its own name and generated
+namespace, its own snapshot bucket and IAM role, and a copy of the
+`restate-apps` isolation policy for its own service namespace.
+
+## Health signals for delivery tools
+
+A `RestateDeployment` reports one `Ready` condition. Delivery tools need to
+read it, because a rejected revision looks healthy at the pod level: the new
+pods run and pass their probes, and only the condition says that Restate
+refused to register them.
+
+| `Ready` | Reason | Meaning |
+|---|---|---|
+| `True` | `Deployed` | Latest revision registered and serving new invocations |
+| `False` | `ReplicaSetScaling`, `ReplicaSetPodNotReady`, `ReplicaSetPodNotAvailable`, `ReplicaSetNoStatus` | Pods still starting; normal during a rollout |
+| `False` | `AdminCallFailed` | Admin API unreachable or returned a server error; the operator retries |
+| `False` | `AdminCallRejected` | Restate refused the registration; the message carries Restate's error and the operator retries every 30 s but will not succeed until the template changes |
+| `False` | `HashCollision`, `FailedReconcile` | Operator-side error; inspect the operator logs |
+
+The operator also publishes a Warning Event with the same message for
+`AdminCallFailed` and `AdminCallRejected`, so `kubectl describe
+restatedeployment <name>` shows the reason without reading logs.
+
+Verified on operator `3.0.1`: changing `Greeter` from a Service to a Virtual
+Object was rejected by Restate with `META0006`, the condition and Event carried
+that text within about 15 seconds, the previous revision kept serving traffic,
+and the new pods ran unregistered until the template was corrected.
+
+### Terraform
+
+The `kubernetes_manifest` `wait` block matches only positive states: a
+condition reaching a value, a field matching a regex, or a rollout completing
+for the built-in workload kinds. It cannot fail on `Ready=False`, so a rejected
+revision makes `terraform apply` block until its timeout and then report
+`context deadline exceeded` without Restate's reason.
+
+If a `RestateDeployment` is applied from Terraform anyway, set an update
+timeout well under the default, print the condition on failure, and read the
+reason from the resource rather than from Terraform:
+
+```bash
+kubectl -n restate-apps get restatedeployment <name> \
+  -o jsonpath='{range .status.conditions[?(@.type=="Ready")]}{.status} {.reason}: {.message}{"\n"}{end}'
+```
+
+State is not left inconsistent: the provider keeps the previous manifest in
+state when the wait fails, so the next plan already proposes the rollback.
+
+### Argo CD
+
+Argo CD has no built-in health assessment for `restate.dev` kinds and reports
+unknown custom resources as Healthy. Add a health check to `argocd-cm` so a
+rejected revision shows as Degraded with Restate's message, and a rollout in
+progress shows as Progressing:
+
+```yaml
+data:
+  resource.customizations.health.restate.dev_RestateDeployment: |
+    hs = { status = "Progressing", message = "Waiting for RestateDeployment status" }
+    if obj.status == nil then
+      return hs
+    end
+    if obj.metadata.generation ~= nil and obj.status.observedGeneration ~= nil
+       and obj.status.observedGeneration < obj.metadata.generation then
+      hs.message = "Waiting for the operator to observe the latest generation"
+      return hs
+    end
+    if obj.status.conditions ~= nil then
+      for _, c in ipairs(obj.status.conditions) do
+        if c.type == "Ready" then
+          if c.status == "True" then
+            hs.status = "Healthy"
+            hs.message = c.message or "Deployed"
+          elseif c.reason == "AdminCallRejected" then
+            hs.status = "Degraded"
+            hs.message = c.message
+          else
+            hs.message = (c.reason or "") .. ": " .. (c.message or "")
+          end
+          return hs
+        end
+      end
+    end
+    return hs
+```
+
+With this in place, a sync of a rejected revision fails its health check within
+one reconcile instead of waiting on a timeout, and the previous revision keeps
+serving because the operator never replaced it. Teams that deploy the cluster
+stages with Terraform and the applications with Argo CD get the boundary this
+guide recommends without giving up automated health gating.
+
+### Flux
+
+Flux's health checks use kstatus, which treats a `Ready=False` condition as
+still reconciling and reports failure only on a `Stalled=True` condition. The
+operator does not set `Stalled`, so a rejected revision keeps a Flux
+`Kustomization` in progress until its `timeout`. Set that timeout to a few
+minutes and read the `Ready` reason as above to see why.
 
 ## Useful fields
 
