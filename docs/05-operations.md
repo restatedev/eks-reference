@@ -161,6 +161,30 @@ does not expose anything by itself, and it does not change what the server
 binds to. Equally, exposing ingress without setting it leaves the playground
 pointing somewhere your users cannot reach.
 
+## Observability
+
+Restate needs no agent or sidecar; the work is on the platform side.
+
+- **Metrics.** Every Restate pod serves Prometheus metrics on port 5122 at
+  `/metrics`, the same port as node traffic. The operator's NetworkPolicy
+  admits that port only from the `restate` and `restate-operator` namespaces,
+  so a scraper elsewhere must be added under `security.networkPeers.node` in
+  `resources/04-restate-cluster.yaml` (the older `metrics` key is deprecated).
+  Scrape each pod through `svc/restate-cluster`, the headless Service, so
+  per-node series keep their identity. Restate publishes two Grafana dashboards
+  to import; see [Metrics](https://docs.restate.dev/server/monitoring/metrics).
+- **Logs.** The operator sets `RESTATE_LOG_FORMAT=json` on the pods, so the
+  platform's usual log collector picks them up as structured events. Keep the
+  default `info` level in production; see
+  [Logging](https://docs.restate.dev/server/monitoring/logging).
+- **Traces.** Restate exports OTLP traces of invocations when
+  `tracing-endpoint` points at a collector; see
+  [Tracing](https://docs.restate.dev/server/monitoring/tracing). A collector
+  inside the cluster has a private address, which the operator's default egress
+  policy blocks, so add its address under `spec.security.networkEgressRules`
+  as described under
+  [Private AWS endpoints](00-architecture.md#private-aws-endpoints).
+
 ## Verify the snapshot path
 
 Automatic snapshots require both the configured record threshold and interval,
@@ -460,6 +484,16 @@ affect a live replicated system. Before applying:
 3. change one dimension at a time;
 4. watch pods and `restatectl status` until the cluster is healthy again.
 
+### Node maintenance
+
+The operator creates a PodDisruptionBudget on the Restate pods with
+`maxUnavailable: 1`, so a node drain or a managed node-group upgrade evicts one
+Restate pod at a time and waits for it to be Ready elsewhere before the next.
+With three nodes and required host anti-affinity, an evicted pod has nowhere to
+go until a replacement node exists, so drain with a surge node available or
+expect the pod to sit Pending until the drained node returns. Check
+`restatectl status` between nodes, as for any other roll.
+
 ### Upgrade Restate or the operator
 
 The image and chart are intentionally pinned. Before upgrading:
@@ -486,10 +520,9 @@ kubectl -n restate rollout status statefulset/restate --timeout=15m
 kubectl -n restate exec restate-0 -- restatectl status
 ```
 
-Measured on a 1.7.7 to 1.7.8 roll and back: Terraform returned in about one
-second each time, the three pods took just over two minutes to cycle, and an
-in-cluster client invoking twice per second saw one connection reset out of
-276 requests, at the moment a pod terminated, with a p99 of 193 ms.
+Expect the roll itself to take a few minutes for three pods. Clients may see a
+connection reset at the moment a pod terminates; invocations are retried by
+Restate, but a client holding an open connection to that pod is not.
 
 A `kubectl port-forward` to `svc/restate` is pinned to one pod and dies when
 that pod is replaced, so a client tunnelled through it sees connection errors

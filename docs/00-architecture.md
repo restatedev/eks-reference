@@ -301,9 +301,9 @@ aws-region = "<region>"
 ```
 
 The IAM policy in `resources/01-restate-snapshots-iam-policy.json` grants
-bucket-wide object read, write, and delete, which is what the provider uses;
-the object-store metadata path was not exercised in this repository's
-validation, so verify it on a test cluster first. Only Amazon S3 is
+bucket-wide object read, write, and delete, which is what the provider uses.
+This repository's validation covers the replicated store only; test the
+object-store configuration before adopting it. Only Amazon S3 is
 supported for metadata; S3-compatible stores such as MinIO are supported for
 snapshots but not for metadata, and the bucket must be in the same region as
 the cluster because metadata latency affects cluster operations directly.

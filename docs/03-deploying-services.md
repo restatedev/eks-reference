@@ -241,6 +241,11 @@ invocations: the finalizer drained the revision and the operator removed the
 ReplicaSet, Services, and pods, leaving the namespace empty without manual
 intervention.
 
+Deletion always takes at least `drainDelaySeconds` (300 seconds by default)
+even when no invocation is in flight, because the latest revision only becomes
+inactive when it is deregistered and then waits out its drain delay like any
+other. Budget for that in pipelines that delete and recreate services.
+
 An object that remains `Terminating` is usually waiting for pinned invocations,
 not stuck. Inspect the Restate deployment before considering finalizer changes.
 If the target `RestateCluster` no longer exists, the operator permits immediate
@@ -288,10 +293,10 @@ The operator also publishes a Warning Event with the same message for
 `AdminCallFailed` and `AdminCallRejected`, so `kubectl describe
 restatedeployment <name>` shows the reason without reading logs.
 
-Verified on operator `3.0.1`: changing `Greeter` from a Service to a Virtual
-Object was rejected by Restate with `META0006`, the condition and Event carried
-that text within about 15 seconds, the previous revision kept serving traffic,
-and the new pods ran unregistered until the template was corrected.
+For example, a revision that changes a service's type from Service to Virtual
+Object is rejected by Restate with `META0006`. The condition and Event carry
+that message, the previous revision keeps serving traffic, and the new pods
+run unregistered until the spec is corrected.
 
 ### Terraform
 
