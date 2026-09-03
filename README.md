@@ -20,7 +20,7 @@ Keep these three layers separate while reading the guide:
 |---|---|
 | EKS cluster | Existing AWS/Kubernetes infrastructure; this repository leaves it unchanged |
 | Restate cluster | Three stateful Restate server pods installed into EKS |
-| SDK service | Customer application code that uses a Restate SDK; deployed separately |
+| SDK service | Customer application code that uses a Restate SDK; deployed through an independent application workflow |
 
 The sizing and runtime tuning come from Restate Cloud's
 `3-node.xlarge-vqueues` profile:
@@ -53,12 +53,14 @@ The sizing and runtime tuning come from Restate Cloud's
   roll out and drain SDK service revisions safely.
 - Two deployment paths that consume the same manifests:
   - a transparent, command-by-command `kubectl`/Helm runbook;
-  - a two-stage Terraform or OpenTofu workflow.
+  - a two-stage Terraform or OpenTofu cluster workflow, with an optional third
+    application stage kept in separate state.
 
-Completing either deployment path gives you a healthy Restate cluster, its
-operator, persistent storage, and snapshot access. It does **not** deploy a
-customer application or expose a public endpoint. Those are separate handoffs
-to the application and networking owners.
+Completing the cluster portion of either deployment path gives you a healthy
+Restate cluster, its operator, persistent storage, and snapshot access. It does
+**not** expose a public endpoint. A customer application is a separate handoff
+to its application owner; the Terraform path includes an optional, separately
+state-managed example for teams that want it.
 
 ## Before you deploy
 
@@ -75,10 +77,15 @@ provides the commands that verify each one.
    Service-CIDR egress policy is derived from `serviceIpv4Cidr`.
 4. **Snapshots:** use an S3 bucket dedicated to this Restate cluster. The
    snapshot prefix is not unique across installations.
-5. **Persistent data:** deleting the `RestateCluster` removes its namespace and
+5. **Metadata durability:** choose the replicated metadata store shipped in the
+   example or an S3 metadata store before the first cluster apply. The S3
+   option removes metadata quorum from the Restate volumes, while adding an
+   external dependency and latency consideration. See
+   [Data durability](docs/00-architecture.md#data-durability-model).
+6. **Persistent data:** deleting the `RestateCluster` removes its namespace and
    PVCs. The StorageClass retains the underlying PVs, but recovery is a manual
    operation; retained volumes do not reattach automatically.
-6. **Existing infrastructure:** the EBS CSI driver, sufficient EKS access, and
+7. **Existing infrastructure:** the EBS CSI driver, sufficient EKS access, and
    an IAM OIDC provider for IRSA must already exist unless the Terraform path
    is explicitly told to create the OIDC provider.
 
@@ -95,11 +102,11 @@ The complete checklist and verification commands are in
 Please use one path per installation. If you move an existing installation to
 Terraform, first import its AWS and Kubernetes resources into Terraform state.
 
-Both paths finish with the Restate cluster installed. Deploy your SDK services
-separately, with `kubectl` or your existing application pipeline — they are
-still operator-managed: the operator reconciles them as `RestateDeployment`
-resources, handling revisioning, registration, and draining. See
-[Deploying services](docs/03-deploying-services.md).
+Both paths finish with the Restate cluster installed. Deploy SDK services from
+an application-owned workflow: use `kubectl`, your existing delivery system,
+or the optional `terraform/03-services` example in separate state. The operator
+then reconciles each `RestateDeployment`, handling revisioning, registration,
+and draining. See [Deploying services](docs/03-deploying-services.md).
 
 ## Architecture at a glance
 
@@ -152,6 +159,7 @@ resources/             canonical Kubernetes YAML, Helm values, and IAM policy
 terraform/01-foundation
                        S3, IAM/IRSA, namespaces, StorageClass, operator
 terraform/02-restate   RestateCluster and its Service-CIDR egress policy
+terraform/03-services  optional SDK service example in independent state
 docs/                  architecture, deployment, operations, and design notes
 misc/pdf/              source and LLM-oriented build guide for the PDF companion
 output/pdf/            committed customer-facing PDF artifacts
@@ -175,9 +183,9 @@ deployment paths:
 The manual path requires every active `REPLACE_ME_*` value in a file being
 applied to be replaced first. The commented, non-automated Pod Identity
 adaptation may stay unset, and the compute image may stay unset while compute is
-skipped. The Terraform path performs the substitutions it needs in memory, from
-its variables and from the EKS cluster itself; the service image is not among
-them, because Terraform does not deploy services.
+skipped. The Terraform path performs substitutions in memory from its variables
+and the EKS cluster. Stages 01 and 02 install the cluster; optional stage 03
+substitutes `service_image` into the SDK service example.
 
 ## Validation
 
@@ -201,7 +209,8 @@ cluster or AWS account.
 | Dedicated snapshot bucket | A snapshot repository belongs to one Restate cluster |
 | `Retain` EBS reclaim policy | Preserves volumes after accidental CR/namespace deletion |
 | Restate-specific StorageClass name | Avoids colliding with a shared cluster's generic `gp3` class |
-| Two Terraform stages | Restate CRDs must exist in the live cluster before custom resources can be planned |
+| Two ordered Terraform cluster stages | Restate CRDs must exist in the live cluster before custom resources can be planned |
+| Separate optional service state | Application releases keep their cadence and blast radius separate from cluster infrastructure |
 
 ## Known boundaries
 
@@ -210,6 +219,8 @@ cluster or AWS account.
   not expose port 9070 through an unauthenticated LoadBalancer or Ingress.
 - S3 snapshots and retained EBS volumes reduce recovery risk, but this
   repository does not define a complete disaster-recovery procedure.
+- The validated cluster manifest uses replicated metadata. Decide whether to
+  adopt the documented S3 metadata option before the first cluster apply.
 - Runtime upgrades require re-validating the experimental vqueues settings and
   should not be performed by changing the image alone.
 - The example SDK service has placeholder image and sizing values; treat it as

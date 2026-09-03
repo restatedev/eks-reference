@@ -1,5 +1,5 @@
-# Both stages read the same ../terraform.tfvars (see terraform/README.md), so
-# the variable set is declared identically in both stages — each simply
+# Both cluster stages read the same ../terraform.tfvars (see terraform/README.md),
+# so the variable set is declared identically in both stages — each simply
 # ignores what it doesn't use. Keep the two files in sync.
 
 variable "cluster_name" {

@@ -246,6 +246,13 @@ kubectl get storageclass restate-gp3 -o yaml
 The expected class uses encrypted XFS, 6000 IOPS, 500 MiB/s,
 `WaitForFirstConsumer`, and `reclaimPolicy: Retain`.
 
+Before the first cluster apply, choose the metadata provider. The canonical
+manifest uses the replicated provider validated by this repository. An S3
+metadata provider reduces dependence on a majority of the node volumes but
+adds an external availability and latency dependency. Review
+[Data durability](00-architecture.md#data-durability-model) and, if you choose
+S3, make and validate the documented manifest change before continuing.
+
 Confirm that no active placeholder remains in the cluster manifest, then apply
 it:
 

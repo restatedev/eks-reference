@@ -17,11 +17,11 @@ no service image. Build one from the
 your team uses; any image whose SDK endpoint listens on port 9080 fits the
 manifest unchanged.
 
-Both deployment paths finish with the Restate cluster installed. Neither the
-runbook nor the Terraform modules deploy your services: a service changes at
-your application's cadence, from your application's pipeline, and does not
-belong in the state that owns the cluster. Apply the manifest below with
-`kubectl`, or fold it into whatever already ships your applications.
+Both deployment paths finish with the Restate cluster installed. A service
+changes at your application's cadence and should not share the state that owns
+the cluster. Apply the manifest below with `kubectl`, fold it into your existing
+delivery system, or use the optional `terraform/03-services` example in its own
+state.
 
 That is a boundary of the deployment paths, not of the operator. The operator
 installed in stage 01 reconciles `RestateDeployment` resources the same way it
@@ -284,10 +284,14 @@ refused to register them.
 | `Ready` | Reason | Meaning |
 |---|---|---|
 | `True` | `Deployed` | Latest revision registered and serving new invocations |
-| `False` | `ReplicaSetScaling`, `ReplicaSetPodNotReady`, `ReplicaSetPodNotAvailable`, `ReplicaSetNoStatus` | Pods still starting; normal during a rollout |
-| `False` | `AdminCallFailed` | Admin API unreachable or returned a server error; the operator retries |
-| `False` | `AdminCallRejected` | Restate refused the registration; the message carries Restate's error and the operator retries every 30 s but will not succeed until the template changes |
-| `False` | `HashCollision`, `FailedReconcile` | Operator-side error; inspect the operator logs |
+| `False` | `ReplicaSetScaling`, `ReplicaSetPodNotReady`, `ReplicaSetPodNotAvailable` | Pods still starting; normal during a rollout |
+| `False` | initial ReplicaSet status absent | Operator 3.0.1 may put `ReplicaSetNoStatus` in the message rather than the reason; continue waiting for pod status |
+| `False` | `AdminCallFailed` | The admin request failed in transport or response decoding; the operator retries |
+| `False` | `AdminCallRejected` | The admin API returned a non-success response, including a 5xx; inspect the response in the message to distinguish a transient server problem from an incompatible registration |
+| `False` | `NotLatest`, `ForeignDeployment` | The revision conflicts with the deployment Restate considers current; inspect the resource, Restate deployments, and operator logs before retrying |
+| `False` | `HashCollision` | The generated revision name collided; the operator retries with a new collision count |
+| `False` | `RouteNotReady`, `ConfigurationNotReady` | A Knative-backed service is still reconciling |
+| `Unknown` | `FailedReconcile` | The controller hit an unexpected reconciliation error; inspect the condition message and operator logs |
 
 The operator also publishes a Warning Event with the same message for
 `AdminCallFailed` and `AdminCallRejected`, so `kubectl describe
@@ -300,23 +304,23 @@ run unregistered until the spec is corrected.
 
 ### Terraform
 
-The `kubernetes_manifest` `wait` block matches only positive states: a
-condition reaching a value, a field matching a regex, or a rollout completing
-for the built-in workload kinds. It cannot fail on `Ready=False`, so a rejected
-revision makes `terraform apply` block until its timeout and then report
-`context deadline exceeded` without Restate's reason.
+The `kubernetes_manifest` condition waiter compares condition type and status,
+but not `status.observedGeneration`. During an update it can therefore accept
+`Ready=True` from the previous generation before the operator observes the new
+template. It also cannot stop early on `Ready=False` or `Unknown` with a useful
+Restate reason.
 
-If a `RestateDeployment` is applied from Terraform anyway, set an update
-timeout well under the default, print the condition on failure, and read the
-reason from the resource rather than from Terraform:
+The optional `terraform/03-services` root avoids this race with
+`scripts/wait-restatedeployment.sh`. The script waits for
+`status.observedGeneration` to reach `metadata.generation`, then requires
+`Ready=True`; on timeout it prints the last reason and message. If you manage a
+`RestateDeployment` in another Terraform root, use the same generation-aware
+gate rather than a positive condition wait alone:
 
 ```bash
 kubectl -n restate-apps get restatedeployment <name> \
   -o jsonpath='{range .status.conditions[?(@.type=="Ready")]}{.status} {.reason}: {.message}{"\n"}{end}'
 ```
-
-State is not left inconsistent: the provider keeps the previous manifest in
-state when the wait fails, so the next plan already proposes the rollback.
 
 ### Argo CD
 
@@ -332,8 +336,9 @@ data:
     if obj.status == nil then
       return hs
     end
-    if obj.metadata.generation ~= nil and obj.status.observedGeneration ~= nil
-       and obj.status.observedGeneration < obj.metadata.generation then
+    if obj.metadata.generation ~= nil and
+       (obj.status.observedGeneration == nil or
+        obj.status.observedGeneration < obj.metadata.generation) then
       hs.message = "Waiting for the operator to observe the latest generation"
       return hs
     end
@@ -343,7 +348,9 @@ data:
           if c.status == "True" then
             hs.status = "Healthy"
             hs.message = c.message or "Deployed"
-          elseif c.reason == "AdminCallRejected" then
+          elseif c.status == "Unknown" or c.reason == "AdminCallRejected"
+              or c.reason == "ForeignDeployment" or c.reason == "NotLatest"
+              or c.reason == "FailedReconcile" then
             hs.status = "Degraded"
             hs.message = c.message
           else
@@ -364,11 +371,41 @@ guide recommends without giving up automated health gating.
 
 ### Flux
 
-Flux's health checks use kstatus, which treats a `Ready=False` condition as
-still reconciling and reports failure only on a `Stalled=True` condition. The
-operator does not set `Stalled`, so a rejected revision keeps a Flux
-`Kustomization` in progress until its `timeout`. Set that timeout to a few
-minutes and read the `Ready` reason as above to see why.
+Without a custom expression, Flux's kstatus handling leaves these
+`Ready=False` failures in progress until the `Kustomization` timeout because
+the operator does not set `Stalled=True`. Current Flux releases support
+[`healthCheckExprs`](https://fluxcd.io/flux/components/kustomize/kustomizations/#health-check-expressions),
+so add a generation-aware check to the application `Kustomization`:
+
+```yaml
+spec:
+  wait: true
+  timeout: 10m
+  healthCheckExprs:
+    - apiVersion: restate.dev/v1beta1
+      kind: RestateDeployment
+      current: >-
+        has(status.observedGeneration) &&
+        status.observedGeneration == metadata.generation &&
+        has(status.conditions) &&
+        status.conditions.exists(c,
+          c.type == 'Ready' && c.status == 'True')
+      failed: >-
+        has(status.observedGeneration) &&
+        status.observedGeneration == metadata.generation &&
+        has(status.conditions) &&
+        status.conditions.exists(c,
+          c.type == 'Ready' &&
+          (c.status == 'Unknown' ||
+           c.reason == 'AdminCallRejected' ||
+           c.reason == 'ForeignDeployment' ||
+           c.reason == 'NotLatest' ||
+           c.reason == 'FailedReconcile'))
+```
+
+When neither expression is true, Flux continues waiting. Keep a bounded timeout
+for transient scaling and admin-connectivity failures, and inspect the `Ready`
+condition if it expires.
 
 ## Useful fields
 

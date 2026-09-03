@@ -41,6 +41,9 @@ checklist has passed.
       enforced; for Terraform, a globally unique name has been chosen.
 - [ ] The EKS cluster name is at most 46 characters so the derived snapshot
       role name stays within IAM's 64-character limit.
+- [ ] The replicated or S3 metadata provider has been chosen for the initial
+      deployment after reviewing the
+      [durability trade-off](00-architecture.md#data-durability-model).
 - [ ] The required tools for one deployment path are installed.
 
 ## Set deployment context
@@ -321,11 +324,11 @@ Choose one path; you do not need every tool in both columns.
 | Tool | Manual path | Terraform path | Purpose |
 |---|:---:|:---:|---|
 | AWS CLI v2 | ✓ | ✓ | Identity, EKS lookup, IAM, S3, exec auth |
-| `kubectl` | ✓ | recommended | Apply and diagnose Kubernetes resources |
+| `kubectl` | ✓ | recommended; required for optional stage 03 | Apply, diagnose, and run the service readiness gate |
 | `eksctl` | ✓ | — | OIDC provider and IRSA role plumbing |
 | Helm | ✓ | optional* | Install the operator manually; verify or authenticate the OCI chart pull |
-| Terraform ≥1.5 or OpenTofu | — | ✓ | Apply the two Terraform stages |
-| `jq` | ✓ | recommended | Format API responses |
+| Terraform ≥1.5 or OpenTofu | — | ✓ | Apply the two cluster stages and optional service stage |
+| `jq` | ✓ | recommended; required for optional stage 03 | Format API responses and parse service readiness |
 | `restatectl` | via pod | via pod | Cluster status and snapshots; provisioning remains operator-managed |
 | `restate` CLI | optional | optional | Service/deployment administration |
 
@@ -365,8 +368,9 @@ grep -RIn 'REPLACE_ME' resources
 | `REPLACE_ME_SERVICE_CIDR` | `06-restate-service-cidr-egress.yaml` | Cluster Service IPv4 CIDR; needed where the CNI enforces NetworkPolicy |
 | `REPLACE_ME_EKS_CLUSTER_NAME` | `02-restate-operator.values.yaml` (commented) | Only when adapting the repository for EKS Pod Identity; the supplied IAM paths implement IRSA only |
 
-The Terraform path does not modify the files. It replaces the required values
-in memory from `terraform.tfvars`.
+The Terraform path does not modify the files. It replaces values in memory from
+`terraform.tfvars`, the EKS API, and—for optional stage 03—the
+`TF_VAR_service_image` environment variable.
 
 ## Appendix: an example cluster, for illustration only
 

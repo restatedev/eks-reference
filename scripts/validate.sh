@@ -6,6 +6,8 @@ cd "$REPOSITORY_ROOT"
 
 export TF_IN_AUTOMATION=1
 
+bash -n scripts/validate.sh scripts/wait-restatedeployment.sh
+
 tofu fmt -check -recursive terraform
 
 for TOFU_STAGE in terraform/01-foundation terraform/02-restate terraform/03-services; do
