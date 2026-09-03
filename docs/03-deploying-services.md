@@ -312,7 +312,7 @@ Restate reason.
 
 The optional `terraform/03-services` root avoids this race with
 `scripts/wait-restatedeployment.sh`. The script waits for
-`status.observedGeneration` to reach `metadata.generation`, then requires
+`status.observedGeneration` to equal `metadata.generation`, then requires
 `Ready=True`; on timeout it prints the last reason and message. If you manage a
 `RestateDeployment` in another Terraform root, use the same generation-aware
 gate rather than a positive condition wait alone:
@@ -348,8 +348,8 @@ data:
           if c.status == "True" then
             hs.status = "Healthy"
             hs.message = c.message or "Deployed"
-          elseif c.status == "Unknown" or c.reason == "AdminCallRejected"
-              or c.reason == "ForeignDeployment" or c.reason == "NotLatest"
+          elseif c.status == "Unknown" or c.reason == "ForeignDeployment"
+              or c.reason == "NotLatest"
               or c.reason == "FailedReconcile" then
             hs.status = "Degraded"
             hs.message = c.message
@@ -363,11 +363,14 @@ data:
     return hs
 ```
 
-With this in place, a sync of a rejected revision fails its health check within
-one reconcile instead of waiting on a timeout, and the previous revision keeps
-serving because the operator never replaced it. Teams that deploy the cluster
-stages with Terraform and the applications with Argo CD get the boundary this
-guide recommends without giving up automated health gating.
+With this in place, a controller failure or a foreign-deployment conflict shows
+as Degraded within one reconcile. Do not classify `AdminCallRejected` as
+terminal: the operator uses it for transient 5xx responses as well as
+incompatible registrations, so the check leaves it Progressing and its message
+explains the timeout. The previous revision keeps serving because the operator
+never replaced it. Teams that deploy the cluster stages with Terraform and the
+applications with Argo CD get the boundary this guide recommends without giving
+up automated health gating.
 
 ### Flux
 
@@ -397,15 +400,15 @@ spec:
         status.conditions.exists(c,
           c.type == 'Ready' &&
           (c.status == 'Unknown' ||
-           c.reason == 'AdminCallRejected' ||
            c.reason == 'ForeignDeployment' ||
            c.reason == 'NotLatest' ||
            c.reason == 'FailedReconcile'))
 ```
 
-When neither expression is true, Flux continues waiting. Keep a bounded timeout
-for transient scaling and admin-connectivity failures, and inspect the `Ready`
-condition if it expires.
+When neither expression is true, Flux continues waiting. Do not include
+`AdminCallRejected` in `failed`: the operator also uses that reason for
+transient 5xx responses. Keep a bounded timeout for transient scaling and
+admin-connectivity failures, and inspect the `Ready` condition if it expires.
 
 ## Useful fields
 

@@ -60,7 +60,7 @@ while ((SECONDS < deadline)); do
 
     if [[ "$observed_generation" =~ ^[0-9]+$ ]] \
       && [[ "$generation" =~ ^[0-9]+$ ]] \
-      && ((observed_generation >= generation)) \
+      && ((observed_generation == generation)) \
       && [[ "$ready_status" == "True" ]]; then
       echo "RestateDeployment ${RSD_NAMESPACE}/${RSD_NAME} is Ready at generation ${generation}."
       exit 0
