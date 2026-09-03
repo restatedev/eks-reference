@@ -265,30 +265,28 @@ nothing; losing two volumes at once loses log records that had not yet been
 covered by a snapshot, and can lose the metadata Raft majority. Partition
 snapshots in S3 exist to speed up that rebuild and to let the log be trimmed;
 they are not a backup of the cluster. There is no supported backup and restore
-procedure for a Restate cluster today. Protecting the EBS volumes is therefore
-the operator's first duty: the `Retain` reclaim policy, encryption, and a
-deliberate teardown order are what this repository provides toward it.
+procedure for a Restate cluster today. Please include the EBS volumes in the
+deployment's data-protection plan. This repository supports that with a
+`Retain` reclaim policy, encryption, and a deliberate teardown order.
 
-### Recommendation: keep metadata out of the volumes
+### Choose the metadata provider before deployment
 
 Restate can store cluster metadata in Amazon S3 instead of the built-in Raft
-`metadata-server` role, and also supports DynamoDB (Restate 1.5.4 and later)
-and etcd; see the
+`metadata-server` role; see the
 [metadata storage documentation](https://docs.restate.dev/server/metadata).
-For a deployment whose data matters, we strongly recommend the object-store
-provider on AWS:
+For a production AWS deployment, please consider the S3 object-store provider
+alongside the replicated provider shipped in this example:
 
-- it removes the one piece of irreplaceable state that would otherwise share a
-  volume with the log, and the object store's durability replaces the Raft
-  majority as the thing that has to survive;
-- it makes the object store a day-one dependency instead of something that can
-  be deferred. A cluster with the replicated metadata store starts and serves
-  traffic with no object store and no snapshots configured at all, but its log
-  is then never trimmed, and the volumes fill up later with no warning that
-  anything was missing;
-- the provider is chosen at initial deployment. Migrating from replicated to
-  an external store later is supported, but it stops invocation processing for
-  the duration of the migration.
+- **S3 metadata** removes the metadata Raft majority from the Restate volumes
+  and places that state in AWS's object-store durability model. It also makes
+  S3 availability and latency part of cluster operations.
+- **Replicated metadata** keeps the deployment self-contained and matches the
+  profile validated by this repository. Its metadata remains dependent on a
+  majority of the three node volumes.
+
+Choose before the initial deployment when practical. A later migration from
+replicated to external metadata is supported, but invocation processing stops
+for the duration of that migration.
 
 The configuration change in `resources/04-restate-cluster.yaml` is to remove
 `metadata-server` from `roles` and add, next to the snapshot destination:
@@ -302,13 +300,11 @@ aws-region = "<region>"
 
 The IAM policy in `resources/01-restate-snapshots-iam-policy.json` grants
 bucket-wide object read, write, and delete, which is what the provider uses.
-This repository's validation covers the replicated store only; test the
-object-store configuration before adopting it. Only Amazon S3 is
-supported for metadata; S3-compatible stores such as MinIO are supported for
-snapshots but not for metadata, and the bucket must be in the same region as
-the cluster because metadata latency affects cluster operations directly.
-Outside AWS, the equivalent is etcd; GCS and Azure Blob are snapshot
-destinations only.
+This repository's validation covers the replicated store only, so test the
+object-store configuration before adopting it. Only Amazon S3 is supported for
+object-store metadata; S3-compatible stores such as MinIO are supported for
+snapshots but not for metadata. Keep the bucket in the same region as the
+cluster because metadata latency affects cluster operations directly.
 
 This repository still ships the replicated metadata store because it is what
 the source profile runs and what was validated end to end here. Treat the

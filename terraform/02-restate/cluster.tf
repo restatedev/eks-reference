@@ -25,9 +25,9 @@ locals {
 resource "kubernetes_manifest" "restate_cluster" {
   manifest = local.restate_cluster_manifest
 
-  # Runbook step 4's "watch until provisioned and Ready" as code: the
-  # operator provisions the cluster once restate-0 is Running, the pods then
-  # turn Ready, and the operator sets the Ready condition on the CR.
+  # Gate initial provisioning on the cluster's Ready condition. The CR has no
+  # observedGeneration, so updates that roll the StatefulSet use the explicit
+  # generation-sensitive procedure in docs/05-operations.md instead.
   wait {
     condition {
       type   = "Ready"

@@ -10,7 +10,9 @@ variable "region" {
 }
 
 variable "snapshots_bucket" {
-  type = string
+  type     = string
+  default  = null
+  nullable = true
 }
 
 variable "create_oidc_provider" {

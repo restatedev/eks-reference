@@ -1,9 +1,10 @@
 # Terraform and OpenTofu deployment
 
 This guide is for a cloud engineer installing Restate on an **existing EKS
-cluster** with Terraform or OpenTofu. The modules create the AWS and Kubernetes
-resources needed by the Restate operator and a three-node Restate cluster; they
-do not create EKS infrastructure, public ingress, or customer applications.
+cluster** with Terraform or OpenTofu. The two required stages create the AWS
+and Kubernetes resources needed by the Restate operator and a three-node
+Restate cluster. An optional third root demonstrates application delivery in
+separate state. The modules do not create EKS infrastructure or public ingress.
 
 If Restate itself is new to you, start with the
 [top-level overview](../README.md) for the product and ownership model, then
@@ -12,9 +13,10 @@ return here.
 The apply is split into two ordered stages because the operator must install
 Restate's Kubernetes resource definitions before Terraform can plan a
 `RestateCluster`. Stage 01 creates the foundation and operator. Stage 02 creates
-the three-node Restate cluster. If the prerequisites are already complete, go
-directly to [Quick start](#quick-start); the intervening sections explain the
-plan and ownership boundaries.
+the three-node Restate cluster. The independent stage 03 example deploys one
+SDK service when an application team chooses Terraform for delivery. If the
+prerequisites are already complete, go directly to [Quick start](#quick-start);
+the intervening sections explain the plan and ownership boundaries.
 
 The examples use Terraform 1.5+. OpenTofu is also supported; replace
 `terraform` with `tofu` in the commands.
@@ -40,9 +42,14 @@ fail planning with a clear error when the target reports another IP family.
 02-restate
   ├─ RestateCluster/restate
   └─ Service-CIDR egress NetworkPolicy (opt-out)
+
+03-services (optional, independent application state)
+  └─ RestateDeployment/service and its readiness gate
 ```
 
-The two stages have separate state and must be applied in order.
+The two cluster stages have separate state and must be applied in order. The
+optional service root also has separate state and is applied only after the
+cluster is healthy.
 
 The chart installs and upgrades its CRDs, but annotates them with
 `helm.sh/resource-policy: keep`. Destroying the Helm release therefore leaves
@@ -87,7 +94,8 @@ stage 01 HCL: the bucket controls, OIDC lookup/creation, and IRSA trust role.
 
 ## Inputs
 
-Both stages read the same `terraform.tfvars` and declare the same input set.
+Stages 01 and 02 read the same `terraform.tfvars` and declare the same input
+set.
 
 | Variable | Required | Default | Meaning |
 |---|:---:|---|---|
@@ -97,10 +105,18 @@ Both stages read the same `terraform.tfvars` and declare the same input set.
 | `create_oidc_provider` | — | `false` | Create the cluster IAM OIDC provider instead of looking it up |
 | `create_service_cidr_egress_policy` | — | `true` | Apply the Service-CIDR egress policy; required where the CNI enforces NetworkPolicy |
 
+Optional stage 03 also reads `cluster_name` and `region`. It accepts the shared
+variable file, but its only additional required input is `service_image`, which
+should be an immutable image digest or release tag supplied by the application
+pipeline.
+
 ## Authentication and authorization
 
 The AWS provider uses ambient credentials. The Kubernetes and Helm providers
-call `aws eks get-token`, so no kubeconfig file is required by Terraform.
+call `aws eks get-token`, so no existing kubeconfig file is required by
+Terraform. Stage 03's readiness script additionally requires `aws`, `kubectl`,
+and `jq`; it creates a temporary kubeconfig with `aws eks update-kubeconfig
+--dry-run` and removes it when the check finishes.
 
 The identity still needs access on both planes:
 
@@ -162,7 +178,8 @@ DNAT (Calico, Cilium) the policy is unnecessary rather than harmful, and
 This is also the reason IPv4 is an explicit support boundary. An IPv6 EKS
 cluster reports `serviceIpv6Cidr` instead, and this reference has not validated
 the operator policies, Pod Identity agent path, or VPC CNI IPv6 behavior as one
-system. Both stages reject a non-IPv4 target rather than partially applying it.
+system. Both cluster stages reject a non-IPv4 target rather than partially
+applying it.
 
 The policy lives in the operator-owned namespace, so destroying the
 `RestateCluster` removes it too. Its full rationale and the exact scope of the
@@ -177,7 +194,7 @@ cp terraform/terraform.tfvars.example terraform/terraform.tfvars
 ```
 
 Edit the file and set `cluster_name`, `region`, and `snapshots_bucket`. Those
-three are the whole required input set.
+three are the complete required input set for the cluster stages.
 
 ### 1. Initialize and plan stage 01
 
@@ -217,6 +234,13 @@ kubectl get crd \
 
 ### 2. Initialize and plan stage 02
 
+Before the first cluster plan, decide whether to keep the validated replicated
+metadata store or configure the documented S3 metadata provider. This choice
+affects the cluster's durability model and is best made before it stores data;
+see [Data durability](../docs/00-architecture.md#data-durability-model). If you
+choose S3, update the canonical cluster manifest and validate that configuration
+before continuing.
+
 ```bash
 terraform -chdir=terraform/02-restate init
 terraform -chdir=terraform/02-restate validate
@@ -235,8 +259,11 @@ Apply the reviewed plan:
 terraform -chdir=terraform/02-restate apply restate.tfplan
 ```
 
-The apply waits up to 15 minutes for `RestateCluster/restate` to report
-`Ready=True`.
+The initial apply waits up to 15 minutes for `RestateCluster/restate` to report
+`Ready=True`. The resource does not expose `observedGeneration`, so this
+condition alone is not an update-rollout gate; use the generation-sensitive
+procedure in [Operations](../docs/05-operations.md#upgrade-restate-or-the-operator)
+for later pod-template changes.
 
 ### 3. Verify the deployment
 
@@ -254,47 +281,53 @@ Use the [manual runbook completion checklist](../docs/02-runbook.md#completion-c
 and [Operations guide](../docs/05-operations.md) for the rest of the health
 checks.
 
-## SDK services: operator-managed, not Terraform-managed
+## Optional stage 03: deploy the SDK service example
 
-Stages 01 and 02 deploy the Restate cluster. They do not deploy your services,
-and they have no `service_image` variable. A separate, optional
-`terraform/03-services` example shows what applying the RestateDeployment from
-Terraform looks like if that is where your delivery pipeline already lives; its
-limitations are described under
-[Health signals for delivery tools](../docs/03-deploying-services.md#health-signals-for-delivery-tools).
+Stages 01 and 02 deliberately stop at a healthy Restate cluster. SDK services
+change at an application's cadence, so keep them in an application-owned
+workflow and state. Use `kubectl`, your existing delivery system, or the
+independent `terraform/03-services` example.
 
-Your services are still managed, just not from here. The operator reconciles
-them through its own `RestateDeployment` custom resource, which gives each
-revision an immutable ReplicaSet and Service, registers it with the cluster's
-admin API automatically, and drains superseded revisions only once no invocation
-is still pinned to them. That is a better lifecycle than Terraform could offer
-for this object, and it is already running in the cluster stage 01 installed.
+To use the example, supply an immutable Restate SDK service image and review a
+saved plan:
 
-Keeping it out of this state is deliberate. A `RestateDeployment` changes on
-every image build, at your application's cadence, from your application's
-pipeline. Holding it here would make each image bump an infrastructure change,
-report plan drift whenever anything else rolls out a revision, and make
-`terraform destroy` of the cluster block on the operator's drain finalizer
-waiting for in-flight invocations. Cluster state and application state also have
-very different blast radii, and one state file gives them the same one.
+```bash
+export TF_VAR_service_image='registry.example/service@sha256:<digest>'
 
-Apply `resources/05-restate-compute.yaml` with `kubectl`, or fold it into
-whatever already ships your applications:
+terraform -chdir=terraform/03-services init
+terraform -chdir=terraform/03-services validate
+terraform -chdir=terraform/03-services plan \
+  -var-file=../terraform.tfvars \
+  -out=service.tfplan
+terraform -chdir=terraform/03-services apply service.tfplan
+```
+
+The root substitutes the image into `resources/05-restate-compute.yaml`. After
+each manifest change, its script waits until `status.observedGeneration` has
+caught up with `metadata.generation` and the current `Ready` condition is
+`True`. This prevents a previous revision's `Ready=True` from satisfying an
+update. On a timeout, the last condition reason and message are printed; use
+the delivery-health guide below to interpret them.
+
+The operator gives each revision an immutable ReplicaSet and Service, registers
+it with Restate, and drains superseded revisions after pinned invocations
+finish. Keeping application state separate prevents an image release from
+sharing the cluster infrastructure's state and blast radius.
+
+Further application-delivery guidance:
 
 - [Deploying SDK services](../docs/03-deploying-services.md) — the lifecycle
   contract, rollout, drain, rollback, and per-symptom troubleshooting;
 - [Health signals for delivery tools](../docs/03-deploying-services.md#health-signals-for-delivery-tools)
-  — how a rejected revision surfaces in Terraform, Argo CD, and Flux, with an
-  Argo CD health check; the common split is Terraform for these two stages and
-  Argo CD for the applications;
+  — how a rejected revision surfaces in Terraform, Argo CD, and Flux;
 - [operator service examples](https://github.com/restatedev/restate-operator/tree/main/examples/services/greeter)
   — upstream `RestateDeployment` manifests, including a Knative variant;
 - [Restate on Kubernetes](https://docs.restate.dev/deploy/services/kubernetes)
   — the product documentation for the same model.
 
-What stage 02 does provide is everything the cluster side of registration needs,
-including the Service-CIDR egress policy described above — so a service deployed
-by any means can register.
+Stage 02 provides the cluster side of registration, including the Service-CIDR
+egress policy described above, so a service deployed by any supported workflow
+can register.
 
 ## Outputs
 
@@ -313,11 +346,18 @@ Stage 02 exposes:
 | `restate_cluster_name` | Restate custom-resource and generated namespace name |
 | `port_forward_hint` | Command for local ingress and admin access |
 
+Optional stage 03 exposes:
+
+| Output | Meaning |
+|---|---|
+| `service_name` | Name of the example `RestateDeployment` |
+| `ingress_port_forward_hint` | Command for local Restate ingress access; the service invocation path is application-specific |
+
 Inspect them with `terraform -chdir=<stage> output`.
 
 ## State and reproducibility
 
-Both roots default to local state. That is suitable only for a scratch
+Each root defaults to local state. That is suitable only for a scratch
 environment. For shared or durable environments, configure an encrypted,
 locking remote backend separately in each `versions.tf` before the first apply.
 
@@ -373,32 +413,59 @@ the Restate cluster, PVs, snapshot bucket, or cluster OIDC provider at risk.
 
 ## Destroy
 
-Teardown has three separate decisions: drain applications, destroy the Restate
-cluster, then decide which stage-01 AWS resources transfer to another owner and
-which are actually deleted. Begin with those ownership decisions and reviewed
-plans rather than an unconditional stage-01 destroy.
+Teardown has three separate decisions: drain applications through their owning
+delivery system, destroy the Restate cluster, then decide which stage-01 AWS
+resources transfer to another owner and which are actually deleted. Begin with
+those ownership decisions and reviewed plans rather than an unconditional
+stage-01 destroy.
 
-Before planning either stage:
+Before planning a destroy:
 
 - pause new traffic and create and verify a current snapshot;
-- delete SDK services and let every revision drain—Terraform does not manage
-  `RestateDeployment`s or wait for their finalizers;
+- identify which delivery system owns each SDK service;
 - record the PV/PVC/AZ/EBS volume mapping before deleting the cluster;
 - capture the bucket name while the stage-01 output still exists.
 
 ```bash
-kubectl -n restate-apps delete restatedeployment --all \
-  --wait=true --timeout=15m
 kubectl -n restate get pvc -o wide
 kubectl get pv \
   -o custom-columns='PV:.metadata.name,CLAIM-NS:.spec.claimRef.namespace,CLAIM:.spec.claimRef.name,VOLUME:.spec.csi.volumeHandle,ZONE:.metadata.labels.topology\.kubernetes\.io/zone'
 BUCKET="$(terraform -chdir=terraform/01-foundation output -raw snapshots_bucket)"
 ```
 
+### 1. Destroy optional stage 03, if used
+
+If the example service is in stage-03 state, destroy it from that state first:
+
+```bash
+export TF_VAR_service_image='registry.example/service@sha256:<same-digest>'
+
+terraform -chdir=terraform/03-services plan \
+  -destroy -var-file=../terraform.tfvars \
+  -out=service-destroy.tfplan
+terraform -chdir=terraform/03-services apply service-destroy.tfplan
+```
+
+The operator's finalizer can keep this apply running while pinned invocations
+drain. If another tool owns the services, remove them through that tool. For a
+manual installation, use:
+
+```bash
+kubectl -n restate-apps delete restatedeployment --all \
+  --wait=true --timeout=15m
+```
+
 If service deletion times out, inspect the pinned invocations and continue
 waiting; allow the finalizer to complete before destroying the cluster.
 
-### 1. Destroy stage 02
+Confirm that no application-owned `RestateDeployment` remains before
+continuing. An empty result is expected:
+
+```bash
+kubectl get restatedeployments.restate.dev --all-namespaces
+```
+
+### 2. Destroy stage 02
 
 Create and apply one saved, reviewed destroy plan:
 
@@ -417,7 +484,7 @@ kubectl get pv \
   -o custom-columns='PV:.metadata.name,STATUS:.status.phase,VOLUME:.spec.csi.volumeHandle,SIZE:.spec.capacity.storage'
 ```
 
-### 2. Decide stage-01 ownership before planning its destroy
+### 3. Decide stage-01 ownership before planning its destroy
 
 Stage 01 may own a cluster-wide OIDC provider. If
 `create_oidc_provider = true` and the EKS cluster is staying, transfer it out of
@@ -472,7 +539,7 @@ terraform -chdir=terraform/01-foundation state rm \
 Removing an object from state transfers responsibility; it does not delete or
 continue managing the AWS object. Record the new owner for every transfer.
 
-### 3. Destroy stage 01
+### 4. Destroy stage 01
 
 Only after those decisions, create and apply the saved stage-01 destroy plan:
 

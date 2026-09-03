@@ -463,8 +463,9 @@ Update the pod template—usually the image—in
 `resources/05-restate-compute.yaml`, review the diff, and apply it. The
 operator creates a new immutable revision and drains the old one.
 
-This is the same on both deployment paths: the Terraform modules deploy the
-cluster, not your services. See
+The required Terraform stages deploy the cluster, while optional stage 03 can
+own the example service in separate application state. Whichever delivery tool
+owns the service should apply the revision and its rollback. See
 [Deploying services](03-deploying-services.md#roll-out-a-new-version).
 
 ### Increase storage
@@ -490,9 +491,11 @@ The operator creates a PodDisruptionBudget on the Restate pods with
 `maxUnavailable: 1`, so a node drain or a managed node-group upgrade evicts one
 Restate pod at a time and waits for it to be Ready elsewhere before the next.
 With three nodes and required host anti-affinity, an evicted pod has nowhere to
-go until a replacement node exists, so drain with a surge node available or
-expect the pod to sit Pending until the drained node returns. Check
-`restatectl status` between nodes, as for any other roll.
+go until a replacement node exists. Its EBS volume is also zonal, so the
+replacement must be eligible in the volume's Availability Zone and satisfy the
+pod's selectors, taints, and host anti-affinity. Provide that capacity before
+draining, or expect the pod to remain Pending until an eligible node is
+available. Check `restatectl status` between nodes, as for any other roll.
 
 ### Upgrade Restate or the operator
 
@@ -509,16 +512,40 @@ The image and chart are intentionally pinned. Before upgrading:
 
 Changing only the container image is not a complete upgrade review.
 
-On the Terraform path, `terraform apply` does not wait for the roll. The
-`RestateCluster` is already `Ready=True` when the change is submitted, so the
-stage-02 wait is satisfied immediately and Terraform returns while the
-StatefulSet is still replacing pods one at a time, highest ordinal first.
-Gate the next pipeline step on the StatefulSet instead:
+On the Terraform path, `terraform apply` does not provide a generation-aware
+rollout gate for `RestateCluster`. The condition can still be `Ready=True` from
+the previous generation when the change is submitted. For a stage-02 change
+that should alter the StatefulSet pod template, record its generation before
+the apply, wait until the operator updates it, and only then wait for rollout
+completion:
 
 ```bash
+PREVIOUS_STS_GENERATION="$(
+  kubectl -n restate get statefulset/restate \
+    -o jsonpath='{.metadata.generation}'
+)"
+
+terraform -chdir=terraform/02-restate apply restate.tfplan
+
+DEADLINE=$((SECONDS + 300))
+until CURRENT_STS_GENERATION="$(
+  kubectl -n restate get statefulset/restate \
+    -o jsonpath='{.metadata.generation}'
+)" && ((CURRENT_STS_GENERATION > PREVIOUS_STS_GENERATION)); do
+  if ((SECONDS >= DEADLINE)); then
+    echo "The operator did not update statefulset/restate within 5 minutes" >&2
+    exit 1
+  fi
+  sleep 3
+done
+
 kubectl -n restate rollout status statefulset/restate --timeout=15m
 kubectl -n restate exec restate-0 -- restatectl status
 ```
+
+Run the initial health checks and capture the old generation before applying
+the saved plan. A bare `kubectl rollout status` issued immediately after
+Terraform can otherwise report the already-completed previous revision.
 
 Expect the roll itself to take a few minutes for three pods. Clients may see a
 connection reset at the moment a pod terminates; invocations are retried by
@@ -545,7 +572,7 @@ Neither mechanism is a complete, automatic disaster-recovery workflow, and
 snapshots are not a backup: the replicated log and the cluster metadata exist
 only on the volumes, and partition state is what snapshots let you rebuild. See
 [Data durability model](00-architecture.md#data-durability-model) for which
-data is irreplaceable and for the recommendation to keep metadata in S3.
+data is irreplaceable and for the replicated-versus-S3 metadata trade-off.
 Released PVs retain their old claim references and do not bind to replacement
 PVCs automatically. Before removal or another data-affecting change, record
 the PV, PVC, Availability Zone, and EBS volume-id mapping:
