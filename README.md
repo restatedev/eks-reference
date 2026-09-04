@@ -22,14 +22,16 @@ Keep these three layers separate while reading the guide:
 | Restate cluster | Three stateful Restate server pods installed into EKS |
 | SDK service | Customer application code that uses a Restate SDK; deployed through an independent application workflow |
 
-The sizing and runtime tuning come from Restate Cloud's
-`3-node.xlarge-vqueues` profile:
+The cluster shape and runtime tuning are derived from Restate Cloud's
+`3-node.xlarge-vqueues` profile. This standalone reference adapts selected
+infrastructure settings, including its initial storage capacity; the
+[profile-fidelity record](docs/04-profile-fidelity.md) explains each difference.
 
 | Setting | Value |
 |---|---|
 | Restate nodes | 3, with hard host anti-affinity |
 | Per-node request | 24 vCPU, 50 GiB memory |
-| Data volume | 256 GiB encrypted `restate-gp3` EBS volume; increase after measuring usage |
+| Data volume | 256 GiB encrypted `restate-gp3` EBS volume; monitor utilization and expand with headroom |
 | Partitions | 48 |
 | Node replication | 2 |
 | Restate image | `docker.restate.dev/restatedev/restate:1.7.7` |

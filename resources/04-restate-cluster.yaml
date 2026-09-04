@@ -391,7 +391,7 @@ spec:
   storage:
     # restate-gp3 StorageClass from resources/03-gp3-storageclass.yaml (EBS
     # CSI driver required; scoped name — see that file's header). The PVC
-    # starts at 256 GiB per node and can grow later, but
-    # storageRequestBytes cannot be decreased.
+    # starts at 256 GiB per node; monitor /restate-data and increase
+    # storageRequestBytes with enough operational headroom.
     storageClassName: restate-gp3
     storageRequestBytes: 274877906944

@@ -364,13 +364,28 @@ data:
 ```
 
 With this in place, a controller failure or a foreign-deployment conflict shows
-as Degraded within one reconcile. Do not classify `AdminCallRejected` as
-terminal: the operator uses it for transient 5xx responses as well as
-incompatible registrations, so the check leaves it Progressing and its message
-explains the timeout. The previous revision keeps serving because the operator
-never replaced it. Teams that deploy the cluster stages with Terraform and the
-applications with Argo CD get the boundary this guide recommends without giving
-up automated health gating.
+as Degraded within one reconcile. `AdminCallRejected` is not reliably terminal:
+the operator uses it for transient 5xx responses as well as incompatible
+registrations, so the check leaves it Progressing and preserves the response
+details in the message. The previous revision keeps serving because the
+operator never replaced it.
+
+The health check itself has no elapsed-time rule. Bound an interactive or CI
+wait explicitly so a permanent rejection cannot leave the caller waiting
+indefinitely:
+
+```bash
+argocd app sync <application> --timeout 600
+# For a sync that another actor started:
+argocd app wait <application> --health --timeout 600
+```
+
+A CLI timeout does not repair or reclassify the revision. Inspect the
+`RestateDeployment` condition, correct an incompatible specification, and
+configure an alert on prolonged Progressing health for automated syncs. Teams
+that deploy the cluster stages with Terraform and applications with Argo CD
+retain automated health gating without treating a transient server response as
+a failed release.
 
 ### Flux
 
