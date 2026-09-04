@@ -298,12 +298,12 @@ spec:
         effect: NoSchedule
 
   # Server config. The cloud profile sets default-num-partitions (48) and
-  # default-replication ({node: 2} for 3 replicas) via env vars; folded into
-  # the TOML here for readability — same effective config. These defaults are
-  # also what provisioning adopts: the operator's ProvisionCluster call sends
-  # no explicit parameters. Keep provisioning operator-managed here because a
-  # concurrent manual `restatectl provision` call may race it and split the
-  # cluster.
+  # default-replication ({node: 2}, two replicas per partition) via env vars.
+  # Folded into the TOML here for readability, with the same effective config.
+  # These defaults are also what provisioning adopts: the operator's
+  # ProvisionCluster call sends no explicit parameters. Keep provisioning
+  # operator-managed here because a concurrent manual `restatectl provision`
+  # call may race it and split the cluster.
   config: |
     roles = [
         "worker",

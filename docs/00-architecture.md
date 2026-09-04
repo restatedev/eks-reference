@@ -210,6 +210,12 @@ The key settings are:
 - `default-num-partitions = 48` and
   `default-replication = { node = 2 }`, used by that call.
 
+A three-node cluster with this replication setting remains available with a 
+single one node down. The log remains available as long as two-node write
+quorum can be reached. This also allows each partition to have a leader and
+one warm replica; either node can be lost while preserving the partition, with 
+minimal disruption to processing latency.
+
 The operator waits for `restate-0` to be **Running**, deliberately not Ready
 because Restate pods become Ready only after provisioning. It calls the
 `ProvisionCluster` gRPC API through the headless Service with no explicit
