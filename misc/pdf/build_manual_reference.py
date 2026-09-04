@@ -21,9 +21,9 @@ from reportlab.platypus import (
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT = "output/pdf/restate-eks-manual-deployment-reference.pdf"
-DEFAULT_SOURCE_COMMIT = "388fbec8fdb93b9e9218efaae8fc7fb63120a50b"
-DEFAULT_SOURCE_DATE = "2026-09-01"
-DEFAULT_PREPARED = "1 September 2026"
+DEFAULT_SOURCE_COMMIT = "b31a2e8274bf56fc7493188b903e55106ac42d08"
+DEFAULT_SOURCE_DATE = "2026-09-04"
+DEFAULT_PREPARED = "4 September 2026"
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--output", default=DEFAULT_OUTPUT)
@@ -466,7 +466,7 @@ story.append(
         ["Component", "Reference value", "Operational meaning"],
         [
             ("Restate", "3 replicas; 24 vCPU and 50 GiB each", "Requires three different eligible nodes"),
-            ("Data", "1 TiB encrypted gp3 per pod; Retain", "EBS survives PVC deletion; reattachment is manual"),
+            ("Data", "256 GiB encrypted gp3 per pod; Retain", "Monitor /restate-data and expand with operational headroom"),
             ("Snapshots", "Dedicated S3 bucket through IRSA", "One bucket or unique prefix per Restate cluster"),
             ("Network", "Default-deny policies where enforced", "Admin 9070 stays private; SDK port 9080 is isolated"),
             ("Exposure", "ClusterIP only", "No ingress, DNS, public endpoint, or auth gateway is created"),
@@ -817,7 +817,7 @@ kubectl get storageclass restate-gp3 -o yaml
 story.append(
     callout(
         "EXPECTED STORAGE",
-        "EBS CSI, encrypted XFS, 6000 IOPS, 500 MiB/s, WaitForFirstConsumer, allowVolumeExpansion, and reclaimPolicy Retain. Retain preserves EBS after PVC deletion; it does not perform automatic recovery.",
+        "Each pod starts with 256 GiB. The StorageClass uses EBS CSI, encrypted XFS, 6000 IOPS, 500 MiB/s, WaitForFirstConsumer, allowVolumeExpansion, and reclaimPolicy Retain. Monitor /restate-data on every pod and expand with operational headroom. Retain preserves EBS after PVC deletion; it does not perform automatic recovery.",
         "blue",
     )
 )
@@ -1071,8 +1071,8 @@ story.append(
 story.append(P("Safe-change pattern", "H2Custom"))
 story.append(bullet("Verify cluster health and a recent snapshot before changing runtime sizing, storage, image, chart, or experimental settings."))
 story.append(bullet("Review one change at a time. Pod-template changes can roll all three stateful pods and move partition leadership."))
-story.append(bullet("Keep requested storage at its current size or increase it. Existing volume expansion depends on the EBS CSI driver and StorageClass."))
-story.append(bullet("For upgrades, validate release compatibility and every experimental/profile-derived setting; changing only the image is not a complete upgrade plan."))
+story.append(bullet("Monitor /restate-data on every pod. Expand with operational headroom, then confirm capacity."))
+story.append(bullet("For upgrades, revalidate release compatibility and profile-derived settings; changing only the image is incomplete."))
 story.append(PageBreak())
 
 # 12
