@@ -322,9 +322,10 @@ Each Restate pod starts with a 256 GiB PVC using the repository-owned
 - `WaitForFirstConsumer`, so the volume is provisioned in the pod's zone;
 - `Retain`, so deleting the PVC does not delete the EBS PV.
 
-The PVC can grow after observing actual log and snapshot behavior, but it
-cannot shrink. Choose a larger initial value before the first apply when the
-expected workload requires it.
+Monitor `/restate-data` utilization and growth on every pod, then expand PVC
+capacity while enough operational headroom remains. Choose a larger initial
+value before the first apply when the expected workload requires it. See
+[Monitor and expand storage](05-operations.md#monitor-and-expand-storage).
 
 `Retain` is a safety net, not an automatic restore process. A Released PV keeps
 its former claim reference and must be handled explicitly during recovery.

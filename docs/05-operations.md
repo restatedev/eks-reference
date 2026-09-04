@@ -184,6 +184,20 @@ Restate needs no agent or sidecar; the work is on the platform side.
   policy blocks, so add its address under `spec.security.networkEgressRules`
   as described under
   [Private AWS endpoints](00-architecture.md#private-aws-endpoints).
+- **Storage.** The 256 GiB initial PVC size is a starting point rather than a
+  capacity forecast. Monitor the filesystem mounted at `/restate-data` on all
+  three pods, alert on percentage used and recent growth, and expand with
+  enough headroom for the time your change process takes. This repository does
+  not install an observability stack, so connect these signals to the
+  platform's existing monitoring before handing the cluster over.
+
+For a direct point-in-time check:
+
+```bash
+kubectl -n restate exec restate-0 -- df -h /restate-data
+kubectl -n restate exec restate-1 -- df -h /restate-data
+kubectl -n restate exec restate-2 -- df -h /restate-data
+```
 
 ## Verify the snapshot path
 
@@ -468,12 +482,22 @@ own the example service in separate application state. Whichever delivery tool
 owns the service should apply the revision and its rollback. See
 [Deploying services](03-deploying-services.md#roll-out-a-new-version).
 
-### Increase storage
+### Monitor and expand storage
 
-`spec.storage.storageRequestBytes` may only increase. Increasing it updates the
-PVC request; actual expansion depends on the EBS CSI driver and the
-StorageClass. Keep the value unchanged or increase it; retained PVs do not
-shrink.
+Use the `/restate-data` utilization and growth rate described under
+[Observability](#observability) to choose a new capacity with operational
+headroom. Increase `spec.storage.storageRequestBytes` in
+`resources/04-restate-cluster.yaml`, review the manifest diff or Terraform
+plan, and apply it through the workflow that owns the cluster. The operator
+updates the PVC request; completed expansion depends on the EBS CSI driver and
+the `restate-gp3` StorageClass. Confirm the new capacity on every pod:
+
+```bash
+kubectl -n restate get pvc
+kubectl -n restate exec restate-0 -- df -h /restate-data
+kubectl -n restate exec restate-1 -- df -h /restate-data
+kubectl -n restate exec restate-2 -- df -h /restate-data
+```
 
 ### Change runtime sizing or configuration
 

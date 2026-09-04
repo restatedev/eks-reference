@@ -68,10 +68,9 @@ intentional. A customer performing a standard installation can skip it.
   exists, StorageClass parameters are immutable (applying over it fails), and
   a scoped name keeps other workloads off a class this stack owns.
 - Storage capacity: the source profile uses 1 TiB per node; this reference
-  starts with 256 GiB per node. Kubernetes PVCs can grow but not shrink, so the
-  lower initial allocation avoids provisioning unused EBS storage while
-  preserving a path to increase capacity as log and snapshot usage becomes
-  clear.
+  starts with 256 GiB per node. The lower initial allocation avoids
+  provisioning unused EBS storage while preserving a path to expand capacity
+  as local log and partition-store utilization grows.
 - NetworkPolicy: cloud exposes ingress **and admin** only to its own
   authenticating gateway namespace; this repo opens ingress to `restate-apps`
   and keeps the unauthenticated admin API closed to workloads entirely
