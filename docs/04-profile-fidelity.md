@@ -32,7 +32,6 @@ intentional. A customer performing a standard installation can skip it.
 - **Scheduling**: required hostname anti-affinity + preferred zone spread; the
   `cloud.restate.dev/interruptible` toleration (inert unless you taint nodes
   with it).
-- **Storage**: 1 TiB gp3 per node.
 
 ## Moved, same effect
 
@@ -68,6 +67,11 @@ intentional. A customer performing a standard installation can skip it.
   than cloud's `gp3`: on a shared cluster a generic `gp3` class often already
   exists, StorageClass parameters are immutable (applying over it fails), and
   a scoped name keeps other workloads off a class this stack owns.
+- Storage capacity: the source profile uses 1 TiB per node; this reference
+  starts with 256 GiB per node. Kubernetes PVCs can grow but not shrink, so the
+  lower initial allocation avoids provisioning unused EBS storage while
+  preserving a path to increase capacity as log and snapshot usage becomes
+  clear.
 - NetworkPolicy: cloud exposes ingress **and admin** only to its own
   authenticating gateway namespace; this repo opens ingress to `restate-apps`
   and keeps the unauthenticated admin API closed to workloads entirely

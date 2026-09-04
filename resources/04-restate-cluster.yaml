@@ -1,10 +1,12 @@
 # RestateCluster: 3-node replicated Restate on EKS, managed by the
 # restate-operator (https://github.com/restatedev/restate-operator).
 #
-# Sizing/tuning is a faithful translation of the Restate Cloud profile
+# Sizing/tuning derives from the Restate Cloud profile
 # `3-node.xlarge-vqueues` (restate-cloud/config/profiles.json):
-#   3 replicas x 24 CPU / 50 GiB, 48 partitions, 1 TiB gp3 volume each,
-#   high-throughput production cell tuning with vqueues enabled.
+#   3 replicas x 24 CPU / 50 GiB, 48 partitions, and high-throughput
+#   production cell tuning with vqueues enabled. The profile uses 1 TiB gp3
+#   volumes. This reference initially allocates 256 GiB per node, allowing a
+#   new installation to increase storage after observing workload usage.
 #
 # Deliberately dropped from the cloud rendering (cloud-control-plane machinery
 # that doesn't apply to a standalone deployment):
@@ -388,8 +390,8 @@ spec:
 
   storage:
     # restate-gp3 StorageClass from resources/03-gp3-storageclass.yaml (EBS
-    # CSI driver required; scoped name — see that file's header). 1 TiB per
-    # node, from the profile; can be grown later (storageRequestBytes can
-    # only ever increase).
+    # CSI driver required; scoped name — see that file's header). The PVC
+    # starts at 256 GiB per node and can grow later, but
+    # storageRequestBytes cannot be decreased.
     storageClassName: restate-gp3
-    storageRequestBytes: 1099511627776
+    storageRequestBytes: 274877906944

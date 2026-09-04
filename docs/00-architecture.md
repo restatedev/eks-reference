@@ -17,7 +17,7 @@ version `3.0.1`.
 - A `RestateCluster` named `restate` produces an operator-owned namespace of
   the same name.
 - Three Restate pods run as one StatefulSet with one pod per Kubernetes node.
-- Each pod has a 1 TiB EBS volume; partition snapshots are written to a
+- Each pod starts with a 256 GiB EBS volume; partition snapshots are written to a
   cluster-dedicated S3 bucket.
 - The operator, not an individual Restate node, provisions the cluster exactly
   once.
@@ -313,7 +313,7 @@ later tuning step.
 
 ## Storage and snapshots
 
-Each Restate pod receives a 1 TiB PVC using the repository-owned
+Each Restate pod starts with a 256 GiB PVC using the repository-owned
 `restate-gp3` StorageClass:
 
 - EBS CSI provisioner;
@@ -321,6 +321,10 @@ Each Restate pod receives a 1 TiB PVC using the repository-owned
 - 6000 IOPS and 500 MiB/s;
 - `WaitForFirstConsumer`, so the volume is provisioned in the pod's zone;
 - `Retain`, so deleting the PVC does not delete the EBS PV.
+
+The PVC can grow after observing actual log and snapshot behavior, but it
+cannot shrink. Choose a larger initial value before the first apply when the
+expected workload requires it.
 
 `Retain` is a safety net, not an automatic restore process. A Released PV keeps
 its former claim reference and must be handled explicitly during recovery.

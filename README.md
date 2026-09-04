@@ -29,7 +29,7 @@ The sizing and runtime tuning come from Restate Cloud's
 |---|---|
 | Restate nodes | 3, with hard host anti-affinity |
 | Per-node request | 24 vCPU, 50 GiB memory |
-| Data volume | 1 TiB encrypted `restate-gp3` EBS volume |
+| Data volume | 256 GiB encrypted `restate-gp3` EBS volume; increase after measuring usage |
 | Partitions | 48 |
 | Node replication | 2 |
 | Restate image | `docker.restate.dev/restatedev/restate:1.7.7` |
@@ -126,7 +126,7 @@ and draining. See [Deploying services](docs/03-deploying-services.md).
                           namespace: restate-apps
                           RestateDeployment revisions
 
-  each Restate pod ──► 1 TiB EBS PV       cluster ──IRSA──► dedicated S3 bucket
+  each Restate pod ──► 256 GiB EBS PV     cluster ──IRSA──► dedicated S3 bucket
 ```
 
 The operator owns the `restate` namespace and materializes the StatefulSet,
